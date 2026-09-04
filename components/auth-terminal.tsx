@@ -29,21 +29,21 @@ import { cn } from "@/lib/utils"
 
 type Mode = "sign-in" | "sign-up"
 
-// Floating market arrows (up and down) floating through the background
+// Floating market arrows (using negative delays so on F5 they are already scattered across the screen)
 const MARKET_FLOW_ARROWS = [
   // Rising (Green) Arrows
-  { id: "u1", dir: "up", left: "5%",  dur: "13s", delay: "0s",   size: 64, blur: "5px", op: 0.35, val: "+3.8% ▲" },
-  { id: "u2", dir: "up", left: "22%", dur: "16s", delay: "3.5s", size: 80, blur: "7px", op: 0.40, val: "+5.2% ▲" },
-  { id: "u3", dir: "up", left: "38%", dur: "14s", delay: "7s",   size: 72, blur: "6px", op: 0.30, val: "+2.1% ▲" },
-  { id: "u4", dir: "up", left: "62%", dur: "18s", delay: "1.5s", size: 90, blur: "8px", op: 0.38, val: "+4.6% ▲" },
-  { id: "u5", dir: "up", left: "82%", dur: "15s", delay: "5s",   size: 68, blur: "5px", op: 0.32, val: "+1.9% ▲" },
+  { id: "u1", dir: "up", left: "5%",  dur: "13s", delay: "-3.2s",  size: 64, blur: "5px", op: 0.35, val: "+3.8% ▲" },
+  { id: "u2", dir: "up", left: "22%", dur: "16s", delay: "-9.5s",  size: 80, blur: "7px", op: 0.40, val: "+5.2% ▲" },
+  { id: "u3", dir: "up", left: "38%", dur: "14s", delay: "-6.1s",  size: 72, blur: "6px", op: 0.30, val: "+2.1% ▲" },
+  { id: "u4", dir: "up", left: "62%", dur: "18s", delay: "-13.4s", size: 90, blur: "8px", op: 0.38, val: "+4.6% ▲" },
+  { id: "u5", dir: "up", left: "82%", dur: "15s", delay: "-4.8s",  size: 68, blur: "5px", op: 0.32, val: "+1.9% ▲" },
   
   // Falling (Red) Arrows
-  { id: "d1", dir: "down", left: "14%", dur: "17s", delay: "2s",   size: 58, blur: "6px", op: 0.28, val: "-1.4% ▼" },
-  { id: "d2", dir: "down", left: "31%", dur: "15s", delay: "8s",   size: 74, blur: "7px", op: 0.32, val: "-2.8% ▼" },
-  { id: "d3", dir: "down", left: "50%", dur: "19s", delay: "4s",   size: 82, blur: "8px", op: 0.26, val: "-0.9% ▼" },
-  { id: "d4", dir: "down", left: "74%", dur: "16s", delay: "6.5s", size: 66, blur: "5px", op: 0.30, val: "-3.2% ▼" },
-  { id: "d5", dir: "down", left: "92%", dur: "20s", delay: "1s",   size: 78, blur: "7px", op: 0.25, val: "-1.7% ▼" },
+  { id: "d1", dir: "down", left: "14%", dur: "17s", delay: "-7.4s",  size: 58, blur: "6px", op: 0.28, val: "-1.4% ▼" },
+  { id: "d2", dir: "down", left: "31%", dur: "15s", delay: "-12.0s", size: 74, blur: "7px", op: 0.32, val: "-2.8% ▼" },
+  { id: "d3", dir: "down", left: "50%", dur: "19s", delay: "-2.5s",  size: 82, blur: "8px", op: 0.26, val: "-0.9% ▼" },
+  { id: "d4", dir: "down", left: "74%", dur: "16s", delay: "-10.8s", size: 66, blur: "5px", op: 0.30, val: "-3.2% ▼" },
+  { id: "d5", dir: "down", left: "92%", dur: "20s", delay: "-5.0s",  size: 78, blur: "7px", op: 0.25, val: "-1.7% ▼" },
 ]
 
 export function AuthTerminal({ initialMode = "sign-in" }: { initialMode?: Mode }) {
