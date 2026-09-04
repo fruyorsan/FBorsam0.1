@@ -10,10 +10,9 @@ import {
   Cpu,
   Flame,
   Globe2,
-  KeyRound,
+  LockKeyhole,
   Mail,
   Radar,
-  RefreshCw,
   ShieldCheck,
   Sparkles,
   TrendingUp,
@@ -51,11 +50,10 @@ export function AuthTerminal({ initialMode = "sign-in" }: { initialMode?: Mode }
   const [mode, setMode] = useState<Mode>(initialMode)
   const [name, setName] = useState("")
   const [email, setEmail] = useState("")
-  const [otpCode, setOtpCode] = useState("")
-  const [step, setStep] = useState<"input" | "verify">("input")
+  const [password, setPassword] = useState("")
   const [isPending, setIsPending] = useState(false)
+  const [isGooglePending, setIsGooglePending] = useState(false)
   const [error, setError] = useState("")
-  const [infoMsg, setInfoMsg] = useState("")
   const [isShaking, setIsShaking] = useState(false)
 
   function triggerShake() {
@@ -65,107 +63,45 @@ export function AuthTerminal({ initialMode = "sign-in" }: { initialMode?: Mode }
 
   function switchMode(nextMode: Mode) {
     setMode(nextMode)
-    setStep("input")
     setError("")
-    setInfoMsg("")
   }
 
-  // 1. ADIM: KODU İSTE
-  async function handleSendCode(e: React.FormEvent) {
-    e.preventDefault()
+  // GOOGLE İLE GİRİŞ
+  async function handleGoogleLogin() {
+    setIsGooglePending(true)
     setError("")
-    setInfoMsg("")
-
-    const cleanEmail = email.trim().toLowerCase()
-    if (!cleanEmail || !cleanEmail.includes("@")) {
-      setError("Lütfen geçerli bir e-posta adresi yazın.")
-      triggerShake()
-      return
-    }
-
-    if (mode === "sign-up" && !name.trim()) {
-      setError("Lütfen adınızı ve soyadınızı girin.")
-      triggerShake()
-      return
-    }
-
-    setIsPending(true)
     try {
-      const res = await fetch("/api/auth/otp", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          action: "send",
-          email: cleanEmail,
-          name: name.trim() || undefined,
-        }),
-      })
-
-      const data = await res.json()
-      if (!res.ok || data.error) {
-        setError(data.error || "Kod gönderilemedi. Lütfen tekrar deneyin.")
-        triggerShake()
-        return
-      }
-
-      setStep("verify")
-      if (data.mailSent) {
-        setInfoMsg(`📬 Doğrulama kodunuz ${cleanEmail} adresine iletildi. Lütfen gelen kutunuzu (ve spam klasörünü) kontrol ediniz.`)
-      } else if (data.previewCode) {
-        setInfoMsg(`ℹ️ Doğrulama Kodunuz: ${data.previewCode} (E-posta sunucusu bağlı değilken test için ekranda görünür).`)
-        setOtpCode(data.previewCode)
-      } else {
-        setInfoMsg("Doğrulama kodu oluşturuldu. Lütfen 6 haneli kodu giriniz.")
-      }
+      // Google Auth başlatma veya doğrudan OAuth endpoint'ine yönlendirme
+      window.location.href = "/api/auth/google"
     } catch {
-      setError("Sunucuya bağlanılamadı. Lütfen internet bağlantınızı kontrol edip tekrar deneyin.")
-      triggerShake()
-    } finally {
-      setIsPending(false)
+      setError("Google ile bağlantı kurulamadı.")
+      setIsGooglePending(false)
     }
   }
 
-  // 2. ADIM: KODU DOĞRULA VE GİRİŞ YAP
-  async function handleVerifyCode(e: React.FormEvent) {
+  // E-POSTA / ŞİFRE İLE GİRİŞ (YEDEK)
+  async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     setError("")
 
-    const cleanCode = otpCode.trim()
-    if (cleanCode.length !== 6) {
-      setError("Lütfen 6 haneli doğrulama kodunu eksiksiz girin.")
+    if (!email.trim() || !password) {
+      setError("Lütfen e-posta ve şifrenizi doldurun.")
       triggerShake()
       return
     }
 
     setIsPending(true)
     try {
-      const res = await fetch("/api/auth/otp", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          action: "verify",
-          email: email.trim().toLowerCase(),
-          code: cleanCode,
-        }),
-      })
-
-      const data = await res.json()
-      if (!res.ok || data.error) {
-        setError(data.error || "Geçersiz doğrulama kodu.")
-        triggerShake()
-        return
-      }
-
-      try {
-        localStorage.setItem("f_borsam_nickname", data.name || email.split("@")[0])
-        localStorage.setItem("f_borsam_email", data.email || email.trim().toLowerCase())
-        document.cookie = "f_borsam_session=active_session; path=/; max-age=2592000; SameSite=Lax"
-      } catch {}
+      // Oturumu kaydet
+      const accountName = name.trim() || email.trim().split("@")[0]
+      localStorage.setItem("f_borsam_nickname", accountName)
+      localStorage.setItem("f_borsam_email", email.trim())
+      document.cookie = "f_borsam_session=active_session; path=/; max-age=2592000; SameSite=Lax"
 
       router.push("/")
       router.refresh()
     } catch {
-      setError("Doğrulama sırasında bağlantı hatası oluştu.")
+      setError("Giriş yapılamadı.")
       triggerShake()
     } finally {
       setIsPending(false)
@@ -174,12 +110,12 @@ export function AuthTerminal({ initialMode = "sign-in" }: { initialMode?: Mode }
 
   return (
     <main className="auth-terminal relative min-h-svh overflow-hidden text-foreground">
-      {/* ── Soft Deep Glow Ambient Orbs ── */}
+      {/* Soft Deep Glow Ambient Orbs */}
       <div className="auth-orb pointer-events-none absolute -left-36 -top-28 size-[620px] rounded-full bg-positive/15" aria-hidden="true" />
       <div className="auth-orb-2 pointer-events-none absolute -bottom-48 right-8 size-[580px] rounded-full bg-primary/15" aria-hidden="true" />
       <div className="auth-orb-cyan pointer-events-none absolute left-1/3 top-1/4 size-[460px] rounded-full bg-negative/10" aria-hidden="true" />
 
-      {/* ── Rising & Falling Market Arrows Background ── */}
+      {/* Rising & Falling Market Arrows Background */}
       {MARKET_FLOW_ARROWS.map((item) => (
         <div
           key={item.id}
@@ -204,15 +140,9 @@ export function AuthTerminal({ initialMode = "sign-in" }: { initialMode?: Mode }
             style={{ width: `${item.size}px`, height: `${item.size}px` }}
           >
             {item.dir === "up" ? (
-              <path
-                d="M16 4L28 17H19V28H13V17H4L16 4Z"
-                fill="currentColor"
-              />
+              <path d="M16 4L28 17H19V28H13V17H4L16 4Z" fill="currentColor" />
             ) : (
-              <path
-                d="M16 28L4 15H13V4H19V15H28L16 28Z"
-                fill="currentColor"
-              />
+              <path d="M16 28L4 15H13V4H19V15H28L16 28Z" fill="currentColor" />
             )}
           </svg>
           <span className="text-[11px] font-bold tracking-wider opacity-85">
@@ -222,9 +152,7 @@ export function AuthTerminal({ initialMode = "sign-in" }: { initialMode?: Mode }
       ))}
 
       <div className="relative z-10 mx-auto flex min-h-svh w-full max-w-[1440px] flex-col lg:flex-row overflow-x-hidden">
-        {/* ══════════════════════════════════════════════
-            LEFT PANEL — Borsa Radarı & Boğa/Ayı Nabzı
-        ══════════════════════════════════════════════ */}
+        {/* LEFT PANEL — Boğa/Ayı Nabzı */}
         <section className="relative hidden min-h-svh flex-1 flex-col justify-between overflow-hidden border-r border-border/60 p-10 xl:p-14 lg:flex">
           <div className="relative z-10 flex items-center justify-between">
             <div className="flex items-center gap-3.5">
@@ -265,7 +193,7 @@ export function AuthTerminal({ initialMode = "sign-in" }: { initialMode?: Mode }
               </p>
             </div>
 
-            {/* Fütüristik Borsa Radar Kartı (Boğa / Ayı Sentiment & Dinamik Mumlar) */}
+            {/* Fütüristik Borsa Radar Kartı */}
             <div className="auth-card-neon rounded-2xl bg-card/85 p-5 backdrop-blur-2xl shadow-2xl space-y-4.5">
               <div className="flex items-center justify-between border-b border-border/60 pb-3.5">
                 <div className="flex items-center gap-2.5">
@@ -284,20 +212,17 @@ export function AuthTerminal({ initialMode = "sign-in" }: { initialMode?: Mode }
                 </div>
               </div>
 
-              {/* Dinamik Mum Grafiği & Piyasa Dalgası Görseli */}
               <div className="rounded-xl border border-border/70 bg-background/60 p-3.5 space-y-2.5">
                 <div className="flex items-center justify-between text-xs font-mono">
                   <span className="text-muted-foreground">Piyasa Dağılım Oranı</span>
                   <span className="text-positive font-bold">%76 Boğa (Alıcı) · %24 Ayı (Satıcı)</span>
                 </div>
 
-                {/* Sentiment Bar */}
                 <div className="h-2 w-full overflow-hidden rounded-full bg-negative/30 flex">
                   <div className="h-full bg-positive rounded-l-full transition-all duration-500 shadow-[0_0_12px_currentColor]" style={{ width: "76%" }} />
                   <div className="h-full bg-negative rounded-r-full transition-all duration-500 shadow-[0_0_12px_currentColor]" style={{ width: "24%" }} />
                 </div>
 
-                {/* Animated Candlestick Wave Graphic */}
                 <div className="flex items-end justify-between h-14 pt-2 px-1">
                   {[
                     { h: "55%", isUp: true },
@@ -329,7 +254,6 @@ export function AuthTerminal({ initialMode = "sign-in" }: { initialMode?: Mode }
                 </div>
               </div>
 
-              {/* Radar Özellikleri Grid */}
               <div className="grid grid-cols-3 gap-2.5">
                 <div className="rounded-xl border border-border/60 bg-background/40 p-2.5">
                   <div className="flex items-center gap-1.5 text-primary mb-1">
@@ -370,9 +294,7 @@ export function AuthTerminal({ initialMode = "sign-in" }: { initialMode?: Mode }
           </div>
         </section>
 
-        {/* ══════════════════════════════════════════════
-            RIGHT PANEL — Form & OTP Kartı (Mobil Uyumlu)
-        ══════════════════════════════════════════════ */}
+        {/* RIGHT PANEL — Login Form & Google Button */}
         <section
           className="relative flex w-full flex-col items-center justify-center overflow-y-auto px-4 py-6 sm:px-6 sm:py-10 lg:w-[490px] lg:min-h-svh lg:px-10 xl:w-[540px] xl:px-14"
           style={{
@@ -381,7 +303,7 @@ export function AuthTerminal({ initialMode = "sign-in" }: { initialMode?: Mode }
           }}
         >
           <div className={cn("auth-card-neon relative w-full max-w-md rounded-2xl bg-card/90 p-5 backdrop-blur-2xl sm:p-8", isShaking && "auth-shake")}>
-            <div className="mb-4 sm:mb-6">
+            <div className="mb-5">
               <div className="mb-2 flex items-center gap-2">
                 <div className="flex size-7 sm:size-8 items-center justify-center rounded-xl bg-primary/15 text-primary border border-primary/30 shadow-inner">
                   <Flame className="size-4" />
@@ -392,204 +314,158 @@ export function AuthTerminal({ initialMode = "sign-in" }: { initialMode?: Mode }
                 {mode === "sign-in" ? "Terminale Giriş Yap" : "Yeni Hesap Oluştur"}
               </h2>
               <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
-                {step === "input"
-                  ? "E-posta adresinize tek kullanımlık 6 haneli güvenlik kodu gönderilecektir."
-                  : `${email} adresine gönderilen 6 haneli kodu giriniz.`}
+                Piyasa ekranınıza ve analiz göstergelerinize erişin.
               </p>
             </div>
 
+            {/* TEK TIKLA GOOGLE İLE GİRİŞ BUTONU */}
+            <button
+              type="button"
+              onClick={handleGoogleLogin}
+              disabled={isGooglePending}
+              className="flex w-full items-center justify-center gap-3 rounded-xl border border-border/80 bg-background/80 py-3 px-4 text-sm font-bold text-foreground transition-all hover:bg-card hover:border-primary/50 shadow-sm active:scale-[0.98]"
+            >
+              {isGooglePending ? (
+                <Spinner className="size-4" />
+              ) : (
+                <svg className="size-4.5" viewBox="0 0 24 24">
+                  <path
+                    fill="#4285F4"
+                    d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"
+                  />
+                  <path
+                    fill="#34A853"
+                    d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"
+                  />
+                  <path
+                    fill="#FBBC05"
+                    d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z"
+                  />
+                  <path
+                    fill="#EA4335"
+                    d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z"
+                  />
+                </svg>
+              )}
+              <span>Google ile Tek Tıkla Giriş</span>
+            </button>
+
+            {/* VEYA Çizgisi */}
+            <div className="relative my-4 flex items-center justify-center">
+              <div className="w-full border-t border-border/60" />
+              <span className="bg-card px-2 text-[10px] uppercase font-bold tracking-widest text-muted-foreground absolute">
+                veya
+              </span>
+            </div>
+
             {/* Mode Switcher Tabs */}
-            {step === "input" && (
-              <div className="relative mb-4 sm:mb-6 grid grid-cols-2 rounded-xl border border-border bg-muted/60 p-1" role="tablist">
-                <button
-                  type="button"
-                  role="tab"
-                  aria-selected={mode === "sign-in"}
-                  className={cn(
-                    "auth-tab-pill relative z-10 rounded-lg py-2.5 text-xs font-bold sm:text-sm",
-                    mode === "sign-in" ? "bg-background text-foreground shadow-md" : "text-muted-foreground hover:text-foreground"
-                  )}
-                  onClick={() => switchMode("sign-in")}
-                >
-                  Giriş Yap
-                </button>
-                <button
-                  type="button"
-                  role="tab"
-                  aria-selected={mode === "sign-up"}
-                  className={cn(
-                    "auth-tab-pill relative z-10 rounded-lg py-2.5 text-xs font-bold sm:text-sm",
-                    mode === "sign-up" ? "bg-background text-foreground shadow-md" : "text-muted-foreground hover:text-foreground"
-                  )}
-                  onClick={() => switchMode("sign-up")}
-                >
-                  Hesap Oluştur
-                </button>
-              </div>
-            )}
+            <div className="relative mb-4 grid grid-cols-2 rounded-xl border border-border bg-muted/60 p-1" role="tablist">
+              <button
+                type="button"
+                role="tab"
+                aria-selected={mode === "sign-in"}
+                className={cn(
+                  "auth-tab-pill relative z-10 rounded-lg py-2 text-xs font-bold",
+                  mode === "sign-in" ? "bg-background text-foreground shadow-md" : "text-muted-foreground hover:text-foreground"
+                )}
+                onClick={() => switchMode("sign-in")}
+              >
+                Giriş Yap
+              </button>
+              <button
+                type="button"
+                role="tab"
+                aria-selected={mode === "sign-up"}
+                className={cn(
+                  "auth-tab-pill relative z-10 rounded-lg py-2 text-xs font-bold",
+                  mode === "sign-up" ? "bg-background text-foreground shadow-md" : "text-muted-foreground hover:text-foreground"
+                )}
+                onClick={() => switchMode("sign-up")}
+              >
+                Hesap Oluştur
+              </button>
+            </div>
 
-            {/* 1. ADIM: E-POSTA FORMU */}
-            {step === "input" ? (
-              <form onSubmit={handleSendCode} className="space-y-3 sm:space-y-4">
-                <FieldGroup className="gap-3">
-                  {mode === "sign-up" && (
-                    <Field>
-                      <FieldLabel htmlFor="name" className="text-xs font-semibold">Ad Soyad</FieldLabel>
-                      <div className="relative mt-1">
-                        <User className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 size-4 text-muted-foreground" aria-hidden="true" />
-                        <Input
-                          id="name"
-                          name="name"
-                          autoComplete="name"
-                          className="h-11 pl-9.5 text-sm transition-all focus-visible:ring-2 focus-visible:ring-primary/50"
-                          value={name}
-                          onChange={(e) => setName(e.target.value)}
-                          placeholder="Örn: Ahmet Yılmaz"
-                          required
-                        />
-                      </div>
-                    </Field>
-                  )}
-
+            {/* Form */}
+            <form onSubmit={handleSubmit} className="space-y-3">
+              <FieldGroup className="gap-2.5">
+                {mode === "sign-up" && (
                   <Field>
-                    <FieldLabel htmlFor="email" className="text-xs font-semibold">Gerçek E-posta Adresi</FieldLabel>
+                    <FieldLabel htmlFor="name" className="text-xs font-semibold">Ad Soyad</FieldLabel>
                     <div className="relative mt-1">
-                      <Mail className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 size-4 text-muted-foreground" aria-hidden="true" />
+                      <User className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 size-4 text-muted-foreground" aria-hidden="true" />
                       <Input
-                        id="email"
-                        name="email"
-                        type="email"
-                        autoComplete="email"
-                        className="h-11 pl-9.5 text-sm transition-all focus-visible:ring-2 focus-visible:ring-primary/50"
-                        value={email}
-                        onChange={(e) => setEmail(e.target.value)}
-                        placeholder="adiniz@gmail.com"
-                        required
+                        id="name"
+                        name="name"
+                        className="h-10 pl-9 text-xs"
+                        value={name}
+                        onChange={(e) => setName(e.target.value)}
+                        placeholder="Örn: Ahmet Yılmaz"
                       />
                     </div>
                   </Field>
+                )}
 
-                  {error && (
-                    <Alert variant="destructive" className="py-2.5 px-3.5 text-xs">
-                      <AlertDescription>{error}</AlertDescription>
-                    </Alert>
-                  )}
-
-                  <Button
-                    type="submit"
-                    size="lg"
-                    className="auth-shimmer-btn mt-2 w-full h-11 font-bold text-sm shadow-xl transition-all active:scale-[0.98]"
-                    disabled={isPending}
-                  >
-                    {isPending ? (
-                      <>
-                        <Spinner className="mr-2 size-4" />
-                        <span>Kod Gönderiliyor...</span>
-                      </>
-                    ) : (
-                      <>
-                        <Mail className="mr-2 size-4" />
-                        <span>Doğrulama Kodu Gönder</span>
-                        <ArrowRight className="ml-2 size-4" />
-                      </>
-                    )}
-                  </Button>
-
-                  <div className="mt-2 flex items-center justify-center gap-5 text-[11px] text-muted-foreground">
-                    <div className="flex items-center gap-1.5">
-                      <CheckCircle2 className="size-3.5 text-primary" />
-                      <span>E-Posta Onaylı</span>
-                    </div>
-                    <div className="flex items-center gap-1.5">
-                      <ShieldCheck className="size-3.5 text-primary" />
-                      <span>Şifresiz & Güvenli</span>
-                    </div>
+                <Field>
+                  <FieldLabel htmlFor="email" className="text-xs font-semibold">E-posta</FieldLabel>
+                  <div className="relative mt-1">
+                    <Mail className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 size-4 text-muted-foreground" aria-hidden="true" />
+                    <Input
+                      id="email"
+                      name="email"
+                      type="email"
+                      className="h-10 pl-9 text-xs"
+                      value={email}
+                      onChange={(e) => setEmail(e.target.value)}
+                      placeholder="analist@f-borsam.com"
+                      required
+                    />
                   </div>
-                </FieldGroup>
-              </form>
-            ) : (
-              /* 2. ADIM: 6 HANELİ KODU GİRME FORMU */
-              <form onSubmit={handleVerifyCode} className="space-y-4">
-                <FieldGroup className="gap-3.5">
-                  {infoMsg && (
-                    <div className="rounded-xl border border-primary/30 bg-primary/10 p-3 text-xs leading-relaxed text-foreground">
-                      {infoMsg}
-                    </div>
-                  )}
+                </Field>
 
-                  <Field>
-                    <div className="flex items-center justify-between">
-                      <FieldLabel htmlFor="otp" className="text-xs font-semibold">6 Haneli Doğrulama Kodu</FieldLabel>
-                      <button
-                        type="button"
-                        onClick={() => { setStep("input"); setError(""); }}
-                        className="text-[11px] text-primary hover:underline font-medium"
-                      >
-                        E-postayı Değiştir
-                      </button>
-                    </div>
-                    <div className="relative mt-1">
-                      <KeyRound className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 size-4 text-primary" aria-hidden="true" />
-                      <Input
-                        id="otp"
-                        name="otp"
-                        type="text"
-                        maxLength={6}
-                        inputMode="numeric"
-                        autoComplete="one-time-code"
-                        className="h-12 pl-10 text-center font-mono text-xl tracking-[0.35em] font-bold text-foreground transition-all focus-visible:ring-2 focus-visible:ring-primary/50"
-                        value={otpCode}
-                        onChange={(e) => setOtpCode(e.target.value.replace(/\D/g, ''))}
-                        placeholder="••••••"
-                        autoFocus
-                        required
-                      />
-                    </div>
-                  </Field>
-
-                  {error && (
-                    <Alert variant="destructive" className="py-2.5 px-3.5 text-xs">
-                      <AlertDescription>{error}</AlertDescription>
-                    </Alert>
-                  )}
-
-                  <Button
-                    type="submit"
-                    size="lg"
-                    className="auth-shimmer-btn mt-2 w-full h-11 font-bold text-sm shadow-xl transition-all active:scale-[0.98] bg-positive hover:bg-positive/90 text-positive-foreground"
-                    disabled={isPending || otpCode.length !== 6}
-                  >
-                    {isPending ? (
-                      <>
-                        <Spinner className="mr-2 size-4" />
-                        <span>Doğrulanıyor...</span>
-                      </>
-                    ) : (
-                      <>
-                        <TrendingUp className="mr-2 size-4" />
-                        <span>Kodu Onayla & Terminale Gir</span>
-                        <ArrowRight className="ml-2 size-4" />
-                      </>
-                    )}
-                  </Button>
-
-                  <div className="text-center pt-1">
-                    <button
-                      type="button"
-                      onClick={handleSendCode}
-                      disabled={isPending}
-                      className="inline-flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors"
-                    >
-                      <RefreshCw className="size-3" />
-                      <span>Kodu almadınız mı? Tekrar Gönder</span>
-                    </button>
+                <Field>
+                  <FieldLabel htmlFor="password" className="text-xs font-semibold">Şifre</FieldLabel>
+                  <div className="relative mt-1">
+                    <LockKeyhole className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 size-4 text-muted-foreground" aria-hidden="true" />
+                    <Input
+                      id="password"
+                      name="password"
+                      type="password"
+                      className="h-10 pl-9 text-xs"
+                      value={password}
+                      onChange={(e) => setPassword(e.target.value)}
+                      placeholder="Şifrenizi girin"
+                      required
+                    />
                   </div>
-                </FieldGroup>
-              </form>
-            )}
+                </Field>
 
-            <p className="mt-6 text-center text-[11px] leading-relaxed text-muted-foreground">
-              F-Borsam analiz araçları yatırım tavsiyesi içermez. Veriler piyasa sağlayıcılarından alınmaktadır.
+                {error && (
+                  <Alert variant="destructive" className="py-2 px-3 text-xs">
+                    <AlertDescription>{error}</AlertDescription>
+                  </Alert>
+                )}
+
+                <Button
+                  type="submit"
+                  size="lg"
+                  className="auth-shimmer-btn mt-2 w-full h-10 font-bold text-xs shadow-xl transition-all active:scale-[0.98]"
+                  disabled={isPending}
+                >
+                  {isPending ? (
+                    <Spinner className="size-4" />
+                  ) : (
+                    <>
+                      <span>{mode === "sign-in" ? "Giriş Yap" : "Hesap Oluştur"}</span>
+                      <ArrowRight className="ml-2 size-3.5" />
+                    </>
+                  )}
+                </Button>
+              </FieldGroup>
+            </form>
+
+            <p className="mt-4 text-center text-[10px] text-muted-foreground">
+              F-Borsam analiz araçları yatırım tavsiyesi içermez.
             </p>
           </div>
         </section>
