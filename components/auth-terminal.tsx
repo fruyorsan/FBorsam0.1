@@ -9,6 +9,7 @@ import {
   CheckCircle2,
   Cpu,
   Flame,
+  Globe2,
   KeyRound,
   Mail,
   Radar,
@@ -28,18 +29,21 @@ import { cn } from "@/lib/utils"
 
 type Mode = "sign-in" | "sign-up"
 
-// Floating market arrows (using negative delays so on F5 they are already scattered, never bunching up at top)
+// Floating market arrows (up and down) floating through the background
 const MARKET_FLOW_ARROWS = [
-  { id: "u1", dir: "up", left: "6%",  dur: "14s", delay: "-3.2s",  size: 58, blur: "4px", op: 0.35, val: "+3.8% ▲" },
-  { id: "u2", dir: "up", left: "22%", dur: "17s", delay: "-9.5s",  size: 72, blur: "5px", op: 0.38, val: "+5.2% ▲" },
-  { id: "u3", dir: "up", left: "38%", dur: "15s", delay: "-6.1s",  size: 64, blur: "4px", op: 0.30, val: "+2.1% ▲" },
-  { id: "u4", dir: "up", left: "62%", dur: "19s", delay: "-13.4s", size: 80, blur: "5px", op: 0.35, val: "+4.6% ▲" },
-  { id: "u5", dir: "up", left: "82%", dur: "16s", delay: "-4.8s",  size: 60, blur: "4px", op: 0.32, val: "+1.9% ▲" },
-  { id: "d1", dir: "down", left: "14%", dur: "18s", delay: "-7.4s",  size: 54, blur: "4px", op: 0.28, val: "-1.4% ▼" },
-  { id: "d2", dir: "down", left: "31%", dur: "16s", delay: "-12.0s", size: 68, blur: "5px", op: 0.30, val: "-2.8% ▼" },
-  { id: "d3", dir: "down", left: "50%", dur: "20s", delay: "-2.5s",  size: 74, blur: "5px", op: 0.26, val: "-0.9% ▼" },
-  { id: "d4", dir: "down", left: "74%", dur: "17s", delay: "-10.8s", size: 62, blur: "4px", op: 0.28, val: "-3.2% ▼" },
-  { id: "d5", dir: "down", left: "92%", dur: "21s", delay: "-5.0s",  size: 70, blur: "5px", op: 0.25, val: "-1.7% ▼" },
+  // Rising (Green) Arrows
+  { id: "u1", dir: "up", left: "5%",  dur: "13s", delay: "0s",   size: 64, blur: "5px", op: 0.35, val: "+3.8% ▲" },
+  { id: "u2", dir: "up", left: "22%", dur: "16s", delay: "3.5s", size: 80, blur: "7px", op: 0.40, val: "+5.2% ▲" },
+  { id: "u3", dir: "up", left: "38%", dur: "14s", delay: "7s",   size: 72, blur: "6px", op: 0.30, val: "+2.1% ▲" },
+  { id: "u4", dir: "up", left: "62%", dur: "18s", delay: "1.5s", size: 90, blur: "8px", op: 0.38, val: "+4.6% ▲" },
+  { id: "u5", dir: "up", left: "82%", dur: "15s", delay: "5s",   size: 68, blur: "5px", op: 0.32, val: "+1.9% ▲" },
+  
+  // Falling (Red) Arrows
+  { id: "d1", dir: "down", left: "14%", dur: "17s", delay: "2s",   size: 58, blur: "6px", op: 0.28, val: "-1.4% ▼" },
+  { id: "d2", dir: "down", left: "31%", dur: "15s", delay: "8s",   size: 74, blur: "7px", op: 0.32, val: "-2.8% ▼" },
+  { id: "d3", dir: "down", left: "50%", dur: "19s", delay: "4s",   size: 82, blur: "8px", op: 0.26, val: "-0.9% ▼" },
+  { id: "d4", dir: "down", left: "74%", dur: "16s", delay: "6.5s", size: 66, blur: "5px", op: 0.30, val: "-3.2% ▼" },
+  { id: "d5", dir: "down", left: "92%", dur: "20s", delay: "1s",   size: 78, blur: "7px", op: 0.25, val: "-1.7% ▼" },
 ]
 
 export function AuthTerminal({ initialMode = "sign-in" }: { initialMode?: Mode }) {
@@ -108,7 +112,7 @@ export function AuthTerminal({ initialMode = "sign-in" }: { initialMode?: Mode }
       if (data.mailSent) {
         setInfoMsg(`📬 Doğrulama kodunuz ${cleanEmail} adresine iletildi. Lütfen gelen kutunuzu (ve spam klasörünü) kontrol ediniz.`)
       } else if (data.previewCode) {
-        setInfoMsg(`ℹ️ Kod üretildi: ${data.previewCode} (E-posta servisi bağlı olmadığında test için ekranda gösterilir).`)
+        setInfoMsg(`ℹ️ Doğrulama Kodunuz: ${data.previewCode} (E-posta sunucusu bağlı değilken test için ekranda görünür).`)
         setOtpCode(data.previewCode)
       } else {
         setInfoMsg("Doğrulama kodu oluşturuldu. Lütfen 6 haneli kodu giriniz.")
@@ -152,14 +156,12 @@ export function AuthTerminal({ initialMode = "sign-in" }: { initialMode?: Mode }
         return
       }
 
-      // Başarılı doğrulama -> Local storage ve oturumu kaydet
       try {
         localStorage.setItem("f_borsam_nickname", data.name || email.split("@")[0])
         localStorage.setItem("f_borsam_email", data.email || email.trim().toLowerCase())
         document.cookie = "f_borsam_session=active_session; path=/; max-age=2592000; SameSite=Lax"
       } catch {}
 
-      // Ana ekrana yönlendir
       router.push("/")
       router.refresh()
     } catch {
@@ -172,50 +174,57 @@ export function AuthTerminal({ initialMode = "sign-in" }: { initialMode?: Mode }
 
   return (
     <main className="auth-terminal relative min-h-svh overflow-hidden text-foreground">
-      {/* Background Particles Container */}
-      <div className="pointer-events-none fixed inset-0 z-0 overflow-hidden" aria-hidden="true">
-        <div className="auth-orb absolute -left-36 -top-28 size-[560px] rounded-full bg-positive/12" />
-        <div className="auth-orb-2 absolute -bottom-48 right-8 size-[520px] rounded-full bg-primary/12" />
-        <div className="auth-orb-cyan absolute left-1/3 top-1/4 size-[420px] rounded-full bg-negative/8" />
+      {/* ── Soft Deep Glow Ambient Orbs ── */}
+      <div className="auth-orb pointer-events-none absolute -left-36 -top-28 size-[620px] rounded-full bg-positive/15" aria-hidden="true" />
+      <div className="auth-orb-2 pointer-events-none absolute -bottom-48 right-8 size-[580px] rounded-full bg-primary/15" aria-hidden="true" />
+      <div className="auth-orb-cyan pointer-events-none absolute left-1/3 top-1/4 size-[460px] rounded-full bg-negative/10" aria-hidden="true" />
 
-        {MARKET_FLOW_ARROWS.map((item) => (
-          <div
-            key={item.id}
-            className={cn(
-              "auth-flow-arrow absolute flex items-center gap-1 font-mono font-bold select-none",
-              item.dir === "up" ? "auth-flow-up text-positive" : "auth-flow-down text-negative"
-            )}
-            style={{
-              left: item.left,
-              animationDuration: item.dur,
-              animationDelay: item.delay,
-              filter: `blur(${item.blur})`,
-              opacity: item.op,
-            }}
+      {/* ── Rising & Falling Market Arrows Background ── */}
+      {MARKET_FLOW_ARROWS.map((item) => (
+        <div
+          key={item.id}
+          aria-hidden="true"
+          className={cn(
+            "flex flex-col items-center justify-center gap-1 font-mono select-none pointer-events-none",
+            item.dir === "up" ? "auth-arrow-up text-positive" : "auth-arrow-down text-negative"
+          )}
+          style={{
+            left: item.left,
+            animationDuration: item.dur,
+            animationDelay: item.delay,
+            filter: `blur(${item.blur})`,
+            // @ts-expect-error custom css variable
+            "--op": item.op,
+          }}
+        >
+          <svg
+            viewBox="0 0 32 32"
+            fill="none"
+            className="drop-shadow-[0_0_18px_currentColor]"
+            style={{ width: `${item.size}px`, height: `${item.size}px` }}
           >
-            <svg
-              width={item.size * 0.45}
-              height={item.size * 0.45}
-              viewBox="0 0 32 32"
-              fill="none"
-              xmlns="http://www.w3.org/2000/svg"
-              aria-hidden="true"
-            >
-              {item.dir === "up" ? (
-                <path d="M16 4L28 17H19V28H13V17H4L16 4Z" fill="currentColor" />
-              ) : (
-                <path d="M16 28L4 15H13V4H19V15H28L16 28Z" fill="currentColor" />
-              )}
-            </svg>
-            <span className="text-[10px] font-bold tracking-wider opacity-85">
-              {item.val}
-            </span>
-          </div>
-        ))}
-      </div>
+            {item.dir === "up" ? (
+              <path
+                d="M16 4L28 17H19V28H13V17H4L16 4Z"
+                fill="currentColor"
+              />
+            ) : (
+              <path
+                d="M16 28L4 15H13V4H19V15H28L16 28Z"
+                fill="currentColor"
+              />
+            )}
+          </svg>
+          <span className="text-[11px] font-bold tracking-wider opacity-85">
+            {item.val}
+          </span>
+        </div>
+      ))}
 
       <div className="relative z-10 mx-auto flex min-h-svh w-full max-w-[1440px] flex-col lg:flex-row overflow-x-hidden">
-        {/* LEFT PANEL */}
+        {/* ══════════════════════════════════════════════
+            LEFT PANEL — Borsa Radarı & Boğa/Ayı Nabzı
+        ══════════════════════════════════════════════ */}
         <section className="relative hidden min-h-svh flex-1 flex-col justify-between overflow-hidden border-r border-border/60 p-10 xl:p-14 lg:flex">
           <div className="relative z-10 flex items-center justify-between">
             <div className="flex items-center gap-3.5">
@@ -256,6 +265,7 @@ export function AuthTerminal({ initialMode = "sign-in" }: { initialMode?: Mode }
               </p>
             </div>
 
+            {/* Fütüristik Borsa Radar Kartı (Boğa / Ayı Sentiment & Dinamik Mumlar) */}
             <div className="auth-card-neon rounded-2xl bg-card/85 p-5 backdrop-blur-2xl shadow-2xl space-y-4.5">
               <div className="flex items-center justify-between border-b border-border/60 pb-3.5">
                 <div className="flex items-center gap-2.5">
@@ -267,13 +277,64 @@ export function AuthTerminal({ initialMode = "sign-in" }: { initialMode?: Mode }
                     <p className="text-[11px] text-muted-foreground">Canlı Alıcı/Satıcı Baskı Analizi</p>
                   </div>
                 </div>
+
+                <div className="flex items-center gap-1.5 rounded-full bg-positive/15 px-2.5 py-1 text-[11px] font-mono font-bold text-positive">
+                  <TrendingUp className="size-3.5" />
+                  <span>GÜÇLÜ BOĞA PİYASASI</span>
+                </div>
               </div>
 
-              <div className="grid grid-cols-3 gap-3">
+              {/* Dinamik Mum Grafiği & Piyasa Dalgası Görseli */}
+              <div className="rounded-xl border border-border/70 bg-background/60 p-3.5 space-y-2.5">
+                <div className="flex items-center justify-between text-xs font-mono">
+                  <span className="text-muted-foreground">Piyasa Dağılım Oranı</span>
+                  <span className="text-positive font-bold">%76 Boğa (Alıcı) · %24 Ayı (Satıcı)</span>
+                </div>
+
+                {/* Sentiment Bar */}
+                <div className="h-2 w-full overflow-hidden rounded-full bg-negative/30 flex">
+                  <div className="h-full bg-positive rounded-l-full transition-all duration-500 shadow-[0_0_12px_currentColor]" style={{ width: "76%" }} />
+                  <div className="h-full bg-negative rounded-r-full transition-all duration-500 shadow-[0_0_12px_currentColor]" style={{ width: "24%" }} />
+                </div>
+
+                {/* Animated Candlestick Wave Graphic */}
+                <div className="flex items-end justify-between h-14 pt-2 px-1">
+                  {[
+                    { h: "55%", isUp: true },
+                    { h: "70%", isUp: true },
+                    { h: "45%", isUp: false },
+                    { h: "85%", isUp: true },
+                    { h: "60%", isUp: false },
+                    { h: "92%", isUp: true },
+                    { h: "78%", isUp: true },
+                    { h: "50%", isUp: false },
+                    { h: "96%", isUp: true },
+                    { h: "88%", isUp: true },
+                    { h: "65%", isUp: false },
+                    { h: "100%", isUp: true },
+                  ].map((candle, idx) => (
+                    <div key={idx} className="flex flex-col items-center justify-end h-full w-2">
+                      <div
+                        className={cn(
+                          "w-1.5 rounded-sm auth-candle-anim transition-all",
+                          candle.isUp ? "bg-positive shadow-[0_0_8px_color-mix(in_oklch,var(--positive)_40%,transparent)]" : "bg-negative shadow-[0_0_8px_color-mix(in_oklch,var(--negative)_40%,transparent)]"
+                        )}
+                        style={{
+                          height: candle.h,
+                          animationDelay: `${idx * 150}ms`,
+                        }}
+                      />
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* Radar Özellikleri Grid */}
+              <div className="grid grid-cols-3 gap-2.5">
                 <div className="rounded-xl border border-border/60 bg-background/40 p-2.5">
                   <div className="flex items-center gap-1.5 text-primary mb-1">
-                    <Zap className="size-3.5" />
-                    <span className="font-mono text-[10px] font-bold uppercase">7/24 Canlı</span>
+                    <Globe2 className="size-3.5" />
+                    <span className="font-mono text-[10px] font-bold uppercase">650+ Varlık</span>
                   </div>
                   <p className="text-[11px] font-semibold text-foreground">BIST, Kripto, Döviz</p>
                   <p className="text-[10px] text-muted-foreground">Eş zamanlı veri taraması</p>
@@ -309,7 +370,9 @@ export function AuthTerminal({ initialMode = "sign-in" }: { initialMode?: Mode }
           </div>
         </section>
 
-        {/* RIGHT PANEL */}
+        {/* ══════════════════════════════════════════════
+            RIGHT PANEL — Form & OTP Kartı (Mobil Uyumlu)
+        ══════════════════════════════════════════════ */}
         <section
           className="relative flex w-full flex-col items-center justify-center overflow-y-auto px-4 py-6 sm:px-6 sm:py-10 lg:w-[490px] lg:min-h-svh lg:px-10 xl:w-[540px] xl:px-14"
           style={{
