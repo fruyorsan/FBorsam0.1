@@ -197,7 +197,7 @@ export function AuthTerminal({ initialMode = "sign-in" }: { initialMode?: Mode }
         ))}
       </div>
 
-      <div className="relative z-10 mx-auto flex min-h-svh w-full max-w-[1440px] flex-col lg:flex-row">
+      <div className="relative z-10 mx-auto flex min-h-svh w-full max-w-[1440px] flex-col lg:flex-row overflow-x-hidden">
         {/* ══════════════════════════════════════════════
             LEFT PANEL — Borsa Radarı & Terminal Ambiyansı
         ══════════════════════════════════════════════ */}
@@ -355,28 +355,28 @@ export function AuthTerminal({ initialMode = "sign-in" }: { initialMode?: Mode }
         {/* ══════════════════════════════════════════════
             RIGHT PANEL — Animated Login Form Card
         ══════════════════════════════════════════════ */}
-        <section className="relative flex min-h-svh w-full items-center justify-center px-5 py-10 lg:w-[490px] lg:px-10 xl:w-[540px] xl:px-14">
-          <div className={cn("auth-card-neon relative w-full max-w-md rounded-2xl bg-card/90 p-6 backdrop-blur-2xl sm:p-8", isShaking && "auth-shake")}>
+        <section className="relative flex w-full flex-col items-center justify-center overflow-y-auto px-4 py-6 sm:px-6 sm:py-10 lg:w-[490px] lg:min-h-svh lg:px-10 xl:w-[540px] xl:px-14" style={{paddingTop: 'max(1.5rem, env(safe-area-inset-top))', paddingBottom: 'max(1.5rem, env(safe-area-inset-bottom))'}}>
+          <div className={cn("auth-card-neon relative w-full max-w-md rounded-2xl bg-card/90 p-5 backdrop-blur-2xl sm:p-8", isShaking && "auth-shake")}>
             {/* Header in Form */}
-            <div className="mb-6">
-              <div className="mb-3 flex items-center gap-2">
-                <div className="flex size-8 items-center justify-center rounded-xl bg-primary/15 text-primary border border-primary/30 shadow-inner">
-                  <Flame className="size-4.5" />
+            <div className="mb-4 sm:mb-6">
+              <div className="mb-2 flex items-center gap-2">
+                <div className="flex size-7 sm:size-8 items-center justify-center rounded-xl bg-primary/15 text-primary border border-primary/30 shadow-inner">
+                  <Flame className="size-4" />
                 </div>
                 <span className="font-mono text-xs font-bold uppercase tracking-wider text-primary">Giriş Terminali</span>
               </div>
-              <h2 className="text-2xl font-black tracking-tight text-foreground sm:text-3xl">
+              <h2 className="text-xl font-black tracking-tight text-foreground sm:text-3xl">
                 {mode === "sign-in" ? "Terminale Giriş Yap" : "Yeni Hesap Oluştur"}
               </h2>
-              <p className="mt-1.5 text-xs leading-relaxed text-muted-foreground sm:text-sm">
-                {mode === "sign-in" 
-                  ? "Piyasa ekranınıza ve analiz göstergelerinize erişin." 
+              <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+                {mode === "sign-in"
+                  ? "Piyasa ekranınıza ve analiz göstergelerinize erişin."
                   : "Ücretsiz hesap oluşturarak analiz paneline hemen katılın."}
               </p>
             </div>
 
             {/* Mode Switcher Tabs with Animated Pill */}
-            <div className="relative mb-6 grid grid-cols-2 rounded-xl border border-border bg-muted/60 p-1" role="tablist">
+            <div className="relative mb-4 sm:mb-6 grid grid-cols-2 rounded-xl border border-border bg-muted/60 p-1" role="tablist">
               <button
                 type="button"
                 role="tab"
@@ -404,8 +404,8 @@ export function AuthTerminal({ initialMode = "sign-in" }: { initialMode?: Mode }
             </div>
 
             {/* Login / Sign Up Form */}
-            <form onSubmit={handleSubmit} className="space-y-4">
-              <FieldGroup className="gap-3.5">
+            <form onSubmit={handleSubmit} className="space-y-3 sm:space-y-4">
+              <FieldGroup className="gap-3">
                 {mode === "sign-up" && (
                   <Field>
                     <FieldLabel htmlFor="name" className="text-xs font-semibold">Ad Soyad</FieldLabel>
