@@ -138,6 +138,8 @@ export function AuthTerminal({ initialMode = "sign-in" }: { initialMode?: Mode }
         try {
           localStorage.setItem("f_borsam_nickname", accountName)
           localStorage.setItem("f_borsam_email", email.trim())
+          // 30 günlük oturum çerezi bırak
+          document.cookie = "f_borsam_session=active_session; path=/; max-age=2592000; SameSite=Lax"
         } catch {}
         router.push("/")
         router.refresh()
