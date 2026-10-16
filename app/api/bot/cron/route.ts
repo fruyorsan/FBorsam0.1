@@ -3828,11 +3828,11 @@ export async function GET(_request: NextRequest) {
               }
 
               // ⚡ GENİŞLETİLMİŞ ADAY TARAMASI:
-              // CoinGecko ön filtresi ve ana likit vadeli çiftlerden ilk 18 aday 6'şarlı paralel gruplar halinde taranır.
+              // CoinGecko ön filtresi ve ana likit vadeli çiftlerden ilk 18 aday paralel gruplar halinde taranır.
               const candidatesToScan = availableCandidates.slice(0, 18)
               const scoredCandidates: FuturesScored[] = []
-              for (let i = 0; i < candidatesToScan.length; i += 6) {
-                const chunkResults = await Promise.all(candidatesToScan.slice(i, i + 6).map(evaluateFuturesCandidate))
+              for (let i = 0; i < candidatesToScan.length; i += 9) {
+                const chunkResults = await Promise.all(candidatesToScan.slice(i, i + 9).map(evaluateFuturesCandidate))
                 for (const r of chunkResults) if (r) scoredCandidates.push(r)
               }
               scoredCandidates.sort((a, b) => b.score - a.score)
@@ -3894,6 +3894,17 @@ export async function GET(_request: NextRequest) {
               const grokConfluenceCandidates: FuturesScored[] = grokEvalResults.filter(Boolean) as FuturesScored[]
 
               grokConfluenceCandidates.sort((a, b) => b.score - a.score)
+              if (futuresSummary) {
+                futuresSummary.scanStats = {
+                  scanned: candidatesToScan.length,
+                  candidatesToScan,
+                  scored: scoredCandidates.map(s => ({ sym: s.candSym, score: s.score })),
+                  grokPassed: grokConfluenceCandidates.map(s => ({ sym: s.candSym, score: s.score })),
+                  dryRun: botRisk.dryRun,
+                  killSwitch: botRisk.killSwitchActive,
+                  maxFuturesSlots,
+                }
+              }
               if (grokConfluenceCandidates.length > 0) {
                 console.log(
                   logPrefix,
