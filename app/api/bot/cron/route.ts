@@ -165,8 +165,10 @@ const publicFetch = async (url: string, init: RequestInit = {}, customTtlMs?: nu
   // 1. L1 RAM Kontrolü (Aynı sunucu örneğinde 0ms)
   const cached = publicDataCache.get(url)
   if (cached && now < cached.expiresAt) {
-    // Bozuk/restricted önbellek koruması (örn. code:-1121 veya msg:Service unavailable)
-    if (!cached.body.includes('"Service unavailable') && !cached.body.includes('"restricted location')) {
+    const isValidL1 = url.includes("/klines")
+      ? cached.body.trim().startsWith("[")
+      : (!cached.body.includes('"Service unavailable') && !cached.body.includes('"restricted location'))
+    if (isValidL1) {
       return new Response(cached.body, {
         status: cached.status,
         headers: cached.headers,
@@ -204,6 +206,26 @@ const publicFetch = async (url: string, init: RequestInit = {}, customTtlMs?: nu
           publicDataCache.set(url, { status: proxyRes.status, headers: headersObj, body: text, expiresAt: now + ttl })
           setL2PublicCache(urlHash, text, Math.ceil(ttl / 1000)).catch(() => {})
           return new Response(text, { status: proxyRes.status, headers: headersObj })
+        }
+      } catch {}
+    }
+
+    // YEDEK: Eğer fapi.binance.com klines isteği proxy kotası veya bölge engeline takıldıysa data-api.binance.vision (küresel engelsiz CDN) üzerinden çek
+    if (url.includes("/fapi/v1/klines")) {
+      try {
+        const u = new URL(url)
+        const rawSym = u.searchParams.get("symbol") || ""
+        const spotSym = rawSym.startsWith("1000") ? rawSym.replace(/^1000/, "") : rawSym
+        const visionUrl = `https://data-api.binance.vision/api/v3/klines?symbol=${spotSym}&interval=${u.searchParams.get("interval") || "15m"}&limit=${u.searchParams.get("limit") || "30"}`
+        const visRes = await fetch(visionUrl, { cache: "no-store", signal: AbortSignal.timeout(4000) })
+        if (visRes.ok) {
+          const visText = await visRes.text()
+          if (visText.trim().startsWith("[")) {
+            const headersObj: Record<string, string> = { "content-type": "application/json" }
+            publicDataCache.set(url, { status: 200, headers: headersObj, body: visText, expiresAt: now + ttl })
+            setL2PublicCache(urlHash, visText, Math.ceil(ttl / 1000)).catch(() => {})
+            return new Response(visText, { status: 200, headers: headersObj })
+          }
         }
       } catch {}
     }
@@ -3519,14 +3541,14 @@ export async function GET(_request: NextRequest) {
                     rejectionReasons[candSym] = `kline_http_${kRes15m.status}_${kRes5m.status}`
                     return null
                   }
-                  const klines15m = await kRes15m.json()
-                  const klines5m = await kRes5m.json()
+                  const klines15m = await kRes15m.json().catch(() => null)
+                  const klines5m = await kRes5m.json().catch(() => null)
                   if (!Array.isArray(klines15m) || klines15m.length < 20) {
-                    rejectionReasons[candSym] = "klines15m_len"
+                    rejectionReasons[candSym] = `klines15m_len_${Array.isArray(klines15m) ? klines15m.length : JSON.stringify(klines15m).slice(0, 60)}`
                     return null
                   }
                   if (!Array.isArray(klines5m) || klines5m.length < 20) {
-                    rejectionReasons[candSym] = "klines5m_len"
+                    rejectionReasons[candSym] = `klines5m_len_${Array.isArray(klines5m) ? klines5m.length : JSON.stringify(klines5m).slice(0, 60)}`
                     return null
                   }
 
