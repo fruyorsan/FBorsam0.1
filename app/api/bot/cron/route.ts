@@ -3293,10 +3293,11 @@ export async function GET(_request: NextRequest) {
             let btcChange15mPct = 0
             let btcTakerBuy15mPct = 50
 
+            let btcShieldReason = ""
             try {
               const [btc15mRes, btc5mRes] = await Promise.all([
                 publicFetch(`${BINANCE_FUTURES_BASE}/fapi/v1/klines?symbol=BTCUSDT&interval=15m&limit=5`, { cache: "no-store" }, 15000),
-                publicFetch(`${BINANCE_FUTURES_BASE}/fapi/v1/klines?symbol=BTCUSDT&interval=5m&limit=5`, { cache: "no-store" }, 15000),
+                publicFetch(`${BINANCE_FUTURES_BASE}/fapi/v1/klines?symbol=BTCUSDT&interval=5m&limit=16`, { cache: "no-store" }, 15000),
               ])
 
               if (btc15mRes.ok) {
@@ -3328,13 +3329,14 @@ export async function GET(_request: NextRequest) {
                   if (isCrashPlunge15m) {
                     isBtcCircuitBreakerActive = true
                     isBtcSafeForLong = false
+                    btcShieldReason = `BTC 15m sert düşüş (%${btcChange15mPct.toFixed(2)}, Taker %${btcTakerBuy15mPct.toFixed(1)})`
                     console.warn(logPrefix, `🛑 [BTC GLOBAL CIRCUIT BREAKER AKTİF] BTC son kapanan 15m mumu sert çöküş (%${btcChange15mPct.toFixed(2)}) ve Taker Buy %${btcTakerBuy15mPct.toFixed(1)} < %38! Tüm altcoin alımları HOLD (bekleme) moduna alındı.`)
                   }
                 }
               }
 
               // 5 dakikalıkta aşırı satış baskısı teyidi (Kapanmış son 5m mumu index [-2])
-              // Volatilite Eşiği: Yatay piyasadaki %0.03 gürültü mumlarında kilitlenmeyi önler (Düşüş >= 0.6 * ATR)
+              // Volatilite Eşiği: Yatay piyasadaki %0.05-%0.25 mikro gürültü mumlarında kilitlenmeyi önler (Düşüş >= %0.30 VE >= 1.2 * ATR)
               if (btc5mRes.ok && isBtcSafeForLong) {
                 const btc5mKlines = await btc5mRes.json()
                 if (Array.isArray(btc5mKlines) && btc5mKlines.length >= 16) {
@@ -3348,11 +3350,14 @@ export async function GET(_request: NextRequest) {
                   }))
                   const s5 = atrSeries(c5List, 14)
                   const curAtr5m = s5[s5.length - 1] || Math.max(10, parseFloat(closed5m[2]) - parseFloat(closed5m[3]))
-                  const drop5m = parseFloat(closed5m[1]) - parseFloat(closed5m[4]) // Açılış - Kapanış
+                  const open5m = parseFloat(closed5m[1]) || 1
+                  const drop5m = open5m - parseFloat(closed5m[4]) // Açılış - Kapanış
+                  const drop5mPct = (drop5m / open5m) * 100
 
-                  if (drop5m > 0 && drop5m >= 0.6 * curAtr5m && b5TakerPct < 42) {
+                  if (drop5mPct >= 0.30 && drop5m >= 1.2 * curAtr5m && b5TakerPct < 36) {
                     isBtcSafeForLong = false
-                    console.warn(logPrefix, `🛑 [BTC 5M BASKI] BTC son 5m mumunda sert düşüş (${drop5m.toFixed(1)}$ >= 0.6*ATR ${curAtr5m.toFixed(1)}$) ve Taker Buy %${b5TakerPct.toFixed(1)} < %42! Yeni pozisyon geçici kilitlendi.`)
+                    btcShieldReason = `BTC 5m sert satış (%-${drop5mPct.toFixed(2)}, Taker %${b5TakerPct.toFixed(1)})`
+                    console.warn(logPrefix, `🛑 [BTC 5M BASKI] BTC son 5m mumunda sert düşüş (%-${drop5mPct.toFixed(2)}, ${drop5m.toFixed(1)}$ >= 1.2*ATR ${curAtr5m.toFixed(1)}$) ve Taker Buy %${b5TakerPct.toFixed(1)} < %36! Yeni pozisyon geçici kilitlendi.`)
                   }
                 }
               }
@@ -4205,7 +4210,10 @@ export async function GET(_request: NextRequest) {
                 }
               }
             } else {
-              console.warn(logPrefix, "Binance Global: BTC ani dÃ¼ÅŸÃ¼ÅŸte (-%0.45+ mum), sermayeyi korumak iÃ§in kaldÄ±raÃ§lÄ± alÄ±m pas geÃ§ildi.")
+              console.warn(logPrefix, `Binance Global: ${btcShieldReason || "BTC ani düşüşte"}, sermayeyi korumak için kaldıraçlı alım pas geçildi.`)
+              if (futuresSummary) {
+                futuresSummary.message = `🛡️ Kalkan: ${btcShieldReason || "BTC ani satış baskısında"}, güvenli mum bekleniyor`
+              }
             }
           }
         }
