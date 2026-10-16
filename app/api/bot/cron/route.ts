@@ -2388,6 +2388,10 @@ export async function GET(_request: NextRequest) {
 
                   await appendServerHistory(newClosedPos)
 
+                  // 🧹 Borsa kaynaklı kapanan pozisyonun Redis meta verilerini ve yetim emirlerini temizle:
+                  await clearFuturesPositionMeta(cSym).catch(() => {})
+                  await cancelFuturesAllOpenOrders(globKey, globSecret, cSym).catch(() => {})
+
                   // Kapanış meta bilgisini temizle
                   if (closingMeta) {
                     await clearFuturesClosing(cSym, closingMeta.clientOrderId)
@@ -2416,15 +2420,34 @@ export async function GET(_request: NextRequest) {
             const markP = fPos.markPrice
             if (entryP <= 0 || markP <= 0) continue
 
-            // 🛡️ AÇIK POZİSYON KORUYUCU STOP DOĞRULAMASI:
-            // Borsada bu pozisyona ait bekleyen STOP_MARKET emri var mı kontrol et ve durumunu logla.
+            // 🛡️ AÇIK POZİSYON KORUYUCU STOP DOĞRULAMASI & KENDİ KENDİNİ ONARMA (SELF-HEALING STOP):
+            // Borsada bu pozisyona ait bekleyen STOP_MARKET emri var mı kontrol et; yoksa ANINDA yeniden kur!
             try {
               const openOrders = await getFuturesOpenOrders(globKey, globSecret, sym)
               const activeStopOrder = openOrders.find((o) => o.type === "STOP_MARKET" || o.type === "STOP")
               if (activeStopOrder) {
                 console.log(logPrefix, `✅ [STOP KORUMASI MEVCUT] ${sym} için borsada bekleyen koruyucu stop emri aktif (OrderId: ${activeStopOrder.orderId}, Tetik: ${activeStopOrder.stopPrice || "Bilinmiyor"})`)
               } else {
-                console.warn(logPrefix, `⚠️ [STOP KORUMASI EKSİK] ${sym} pozisyonu açık fakat borsada bekleyen STOP_MARKET emri bulunamadı!`)
+                console.warn(logPrefix, `⚠️ [STOP KORUMASI EKSİK - KENDİ KENDİNİ ONARMA DEVREDE] ${sym} pozisyonu açık fakat borsada bekleyen STOP_MARKET emri bulunamadı! Anında koruyucu stop emri kuruluyor...`)
+                const symFilters = await getFuturesSymbolFilters(sym)
+                const symTick = symFilters?.tickSize || 0.0001
+                const fallbackSlDistPct = 3.50
+                const calculatedSafeStop = parseFloat(formatWithTickSize(Math.min(entryP * (1 - fallbackSlDistPct / 100), markP * 0.985), symTick))
+                if (calculatedSafeStop > 0 && calculatedSafeStop < markP) {
+                  const healStopRes = await executeBinanceFuturesOrder({
+                    apiKey: globKey,
+                    apiSecret: globSecret,
+                    symbol: sym,
+                    side: "SELL",
+                    type: "STOP_MARKET",
+                    stopPrice: calculatedSafeStop,
+                    closePosition: true,
+                    workingType: "MARK_PRICE",
+                  }).catch(() => ({ ok: false, orderId: undefined }))
+                  if (healStopRes.ok && healStopRes.orderId) {
+                    console.log(logPrefix, `🛡️ [KENDİ KENDİNİ ONARAN STOP KURULDU] ${sym} için eksik stop ${calculatedSafeStop}$ seviyesinde başarıyla oluşturuldu (OrderId: ${healStopRes.orderId}).`)
+                  }
+                }
               }
             } catch (err: any) {
               console.warn(logPrefix, `⚠️ [STOP KONTROL HATASI] ${sym} açık emirler sorgulanamadı:`, err.message)
@@ -4332,13 +4355,17 @@ export async function GET(_request: NextRequest) {
                       })
 
                       if (buyRes.ok) {
-                        const actualMargin = (formattedQty * curPrice) / targetLeverage
+                        const effectiveEntryPrice = (buyRes.avgPrice && buyRes.avgPrice > 0) ? buyRes.avgPrice : curPrice
+                        const actualMargin = (formattedQty * effectiveEntryPrice) / targetLeverage
                         const tp1PctDisplay = isCandMeme ? 6.50 : isCandMajor ? 3.50 : 5.00
                         const tp2PctDisplay = isCandMeme ? 15.00 : isCandMajor ? 7.50 : 10.00
                         const slPctDisplay = dynamicSlPct
 
+                        const symFilters = await getFuturesSymbolFilters(candSym)
+                        const symTick = symFilters?.tickSize || 0.0001
+
                         // 🛑 Pozisyon açıldıktan hemen sonra borsaya reduceOnly STOP_MARKET emri gönder (Dinamik ATR Stop).
-                        const stopLossTriggerPrice = stopLossPrice
+                        const stopLossTriggerPrice = parseFloat(formatWithTickSize(effectiveEntryPrice * (1 - (dynamicSlPct / 100)), symTick))
                         const stopOrderRes = await executeBinanceFuturesOrder({
                           apiKey: globKey,
                           apiSecret: globSecret,
@@ -4404,6 +4431,29 @@ export async function GET(_request: NextRequest) {
                             symbol: candSym,
                             message: `🛡️ [STOP EMRİ ONAYLANDI] ${candSym} stop emri borsada aktif. OrderId: ${stopOrderRes.orderId || "Bilinmiyor"}, Tetik: ${stopLossTriggerPrice.toFixed(4)}, Durum: ${stopOrderRes.status}`,
                           })
+
+                          // 🎯 DONANIMSAL TAKE_PROFIT_MARKET EMRİ (İğne/Wick Yakalayıcı):
+                          // Sunucu kapalı veya cron çalışmıyor olsa bile ani sert yukarı iğnede (pump wick) kârı milisaniyesinde borsada alır!
+                          try {
+                            const takeProfitTriggerPrice = parseFloat(formatWithTickSize(effectiveEntryPrice * (1 + (tp1PctDisplay / 100)), symTick))
+                            if (takeProfitTriggerPrice > effectiveEntryPrice) {
+                              const tpOrderRes = await executeBinanceFuturesOrder({
+                                apiKey: globKey,
+                                apiSecret: globSecret,
+                                symbol: candSym,
+                                side: "SELL",
+                                type: "TAKE_PROFIT_MARKET",
+                                stopPrice: takeProfitTriggerPrice,
+                                closePosition: true,
+                                workingType: "MARK_PRICE",
+                              }).catch(() => ({ ok: false, orderId: undefined }))
+                              if (tpOrderRes.ok && tpOrderRes.orderId) {
+                                console.log(logPrefix, `🎯 [TAKE_PROFIT_MARKET AKTİF] ${candSym} borsa TP emri açıldı (OrderId: ${tpOrderRes.orderId}, Tetik Fiyatı: ${takeProfitTriggerPrice.toFixed(4)})`)
+                              }
+                            }
+                          } catch (tpErr: any) {
+                            console.warn(logPrefix, `⚠️ [TP EMRİ GİRİLEMEDİ] ${candSym}:`, tpErr.message)
+                          }
                         }
 
                         await markFuturesBotOwned(candSym)
