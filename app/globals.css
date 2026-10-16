@@ -203,8 +203,10 @@ svg { width: 1em; height: 1em; }
 
 .ticker-shell {
   overflow: hidden;
-  border-bottom: 1px solid var(--border);
-  background: oklch(0.125 0.02 244);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(0, 0, 0, 0.2);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
   height: 34px;
   display: flex;
   align-items: center;
@@ -223,10 +225,19 @@ svg { width: 1em; height: 1em; }
 ::selection { background: color-mix(in oklch, var(--primary) 28%, transparent); }
 
 .finance-grid {
-  background-image:
-    linear-gradient(color-mix(in oklch, var(--primary) 5%, transparent) 1px, transparent 1px),
-    linear-gradient(90deg, color-mix(in oklch, var(--primary) 5%, transparent) 1px, transparent 1px);
-  background-size: 52px 52px;
+  /* Eski kare kare ızgara kaldırıldı: 3D Dönen Noktasal Dünya Küresi için şeffaf zemin */
+  background: transparent;
+}
+
+/* Kartlar metinlerin ve tabloların net okunması için opak ve temiz zeminli tutulur, arkadaki nabız hafifçe süzülür */
+[data-slot="card"] {
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+
+.dark [data-slot="card"] {
+  background-color: color-mix(in oklch, var(--card) 88%, transparent);
+  border-color: color-mix(in oklch, var(--border) 80%, transparent);
 }
 
 /* ——— Background without square grids: pure dark financial depth ——— */

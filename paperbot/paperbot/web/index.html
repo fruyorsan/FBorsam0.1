@@ -1,0 +1,340 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PaperBot — Sanal Kripto/DeFi İşlem Paneli</title>
+<link rel="stylesheet" href="style.css">
+<script src="vendor/chart.umd.min.js" onload="window.__chartReady=true"></script>
+</head>
+<body>
+<div class="banner">⚠ SANAL TEST MODU — Bu sistem sanal (paper) bakiye ile çalışır. Yatırım tavsiyesi değildir.</div>
+
+<header>
+  <div class="brand">🤖 PaperBot <span class="ver" id="ver"></span></div>
+  <div class="head-right">
+    <span class="pill" id="modePill">paper</span>
+    <span class="pill ok" id="feedPill">—</span>
+    <span class="pill" id="cyclePill">—</span>
+    <span class="pill danger hidden" id="haltPill">GÜNLÜK LİMİT AŞILDI</span>
+    <span class="pill danger hidden" id="killPill">KILL SWITCH AKTİF</span>
+  </div>
+</header>
+
+<nav id="tabs">
+  <button data-tab="overview" class="active">📊 Genel Bakış</button>
+  <button data-tab="assets">🪙 Varlıklar & Skorlar</button>
+  <button data-tab="positions">💼 Pozisyonlar</button>
+  <button data-tab="signals">📡 Sinyaller</button>
+  <button data-tab="performance">📈 Performans</button>
+  <button data-tab="backtest">🧪 Backtest</button>
+  <button data-tab="wallets">🐋 Cüzdanlar</button>
+  <button data-tab="settings">⚙ Ayarlar</button>
+</nav>
+
+<main>
+<!-- ============================== GENEL BAKIŞ ============================== -->
+<section id="tab-overview" class="tab active">
+  <div class="actions">
+    <button class="btn" id="btnCycle">▶ Şimdi Analiz Et</button>
+    <button class="btn warn" id="btnResume">⏸ Duraklatmayı Kaldır</button>
+    <button class="btn danger" id="btnKill">🛑 KILL SWITCH — Her şeyi Durdur & Kapat</button>
+    <button class="btn" id="btnReset">↺ Portföyü Sıfırla</button>
+    <span class="muted" id="lastCycle"></span>
+  </div>
+
+  <div class="cards" id="kpiCards">
+    <div class="card"><div class="k">Portföy Değeri</div><div class="v" id="kEquity">—</div><div class="s" id="kEquitySub"></div></div>
+    <div class="card"><div class="k">Nakit (USDT)</div><div class="v" id="kCash">—</div></div>
+    <div class="card"><div class="k">Açık Pozisyon</div><div class="v" id="kOpen">—</div><div class="s" id="kOpenSub"></div></div>
+    <div class="card"><div class="k">Günlük PnL</div><div class="v" id="kDay">—</div><div class="s" id="kDaySub"></div></div>
+    <div class="card"><div class="k">Toplam PnL (kapanan)</div><div class="v" id="kPnl">—</div><div class="s" id="kPnlSub"></div></div>
+    <div class="card"><div class="k">Sharpe / MaxDD</div><div class="v" id="kSharpe">—</div><div class="s" id="kSharpeSub"></div></div>
+  </div>
+
+  <div class="grid2">
+    <div class="panel">
+      <h3>Portföy Değeri (zaman içinde)</h3>
+      <div class="chartbox"><canvas id="equityChart"></canvas></div>
+    </div>
+    <div class="panel">
+      <h3>Son Olaylar / Bildirimler</h3>
+      <div class="feed" id="eventFeed">—</div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <h3>Güncel Varlık Skorları (son çevrim)</h3>
+    <div class="tablewrap"><table id="overviewAssets">
+      <thead><tr><th>Varlık</th><th>Fiyat</th><th>Teknik</th><th>On-chain</th><th>DeFi</th>
+      <th>Risk</th><th>Duygu</th><th>Makro</th><th>Nihai</th><th>Risk Sv.</th><th>Karar</th></tr></thead>
+      <tbody></tbody>
+    </table></div>
+  </div>
+</section>
+
+<!-- ================================ VARLIKLAR ============================== -->
+<section id="tab-assets" class="tab">
+  <div class="panel">
+    <h3>Takip Edilen Varlıklar, Katman Skorları ve Risk Seviyeleri</h3>
+    <div class="tablewrap"><table id="assetsTable">
+      <thead><tr><th>Varlık</th><th>Kategori</th><th>Fiyat</th>
+      <th>Teknik</th><th>On-chain / Akıllı Para</th><th>DeFi</th><th>Risk & Güvenlik</th>
+      <th>Duygu</th><th>Makro</th><th>Nihai Skor</th><th>Risk Seviyesi</th>
+      <th>Karar</th><th>Konum</th></tr></thead>
+      <tbody></tbody>
+    </table></div>
+    <p class="muted">Mock etiketli katmanlar henüz örnek veri kullanıyor (Faz 2-4'te gerçek
+    kaynaklarla değişecek). Risk seviyesi "KRİTİK" olan varlıklar filtrelenir.</p>
+  </div>
+</section>
+
+<!-- =============================== POZİSYONLAR ============================= -->
+<section id="tab-positions" class="tab">
+  <div class="panel">
+    <h3>Açık Sanal Pozisyonlar</h3>
+    <div class="tablewrap"><table id="openPos">
+      <thead><tr><th>Varlık</th><th>Miktar</th><th>Giriş</th><th>SL / TP</th>
+      <th>Güncel</th><th>Kâr/Zarar</th><th>Skor</th><th>Açılış Gerekçesi</th></tr></thead>
+      <tbody></tbody>
+    </table></div>
+  </div>
+  <div class="panel">
+    <h3>Kapalı Pozisyonlar <span class="muted">(yeni → eski)</span></h3>
+    <div class="tablewrap"><table id="closedPos">
+      <thead><tr><th>Varlık</th><th>Giriş</th><th>Çıkış</th><th>Çıkış Sebebi</th>
+      <th>PnL</th><th>Ücret+Gas+Slip</th><th>Skor</th><th>Gerekçe</th></tr></thead>
+      <tbody></tbody>
+    </table></div>
+  </div>
+</section>
+
+<!-- ================================ SİNYALLER ============================== -->
+<section id="tab-signals" class="tab">
+  <div class="panel">
+    <h3>Sinyal Geçmişi <span class="muted">(her kararın skorları ve gerekçesiyle)</span></h3>
+    <div class="filters">
+      <select id="sigAction">
+        <option value="">tüm aksiyonlar</option>
+        <option value="open">open (giriş)</option>
+        <option value="exit">exit (çıkış)</option>
+        <option value="risk_block">risk_block (risk filtresi)</option>
+        <option value="hold">hold (izleme)</option>
+      </select>
+      <input id="sigSymbol" placeholder="örn. BTCUSDT">
+      <button class="btn" id="btnSigFilter">Filtrele</button>
+      <span class="muted" id="sigCount"></span>
+    </div>
+    <div id="signalList" class="signals"></div>
+  </div>
+</section>
+
+<!-- =============================== PERFORMANS ============================== -->
+<section id="tab-performance" class="tab">
+  <div class="cards" id="perfCards">
+    <div class="card"><div class="k">Toplam Kâr/Zarar</div><div class="v" id="pPnl">—</div></div>
+    <div class="card"><div class="k">Kazanma Oranı</div><div class="v" id="pWin">—</div></div>
+    <div class="card"><div class="k">Ort. Kâr / Ort. Zarar</div><div class="v" id="pAvg">—</div></div>
+    <div class="card"><div class="k">İşlem Sayısı</div><div class="v" id="pCount">—</div></div>
+    <div class="card"><div class="k">Maks. Düşüş</div><div class="v" id="pDd">—</div></div>
+    <div class="card"><div class="k">Sharpe Oranı</div><div class="v" id="pSharpe">—</div></div>
+  </div>
+
+  <div class="grid2">
+    <div class="panel">
+      <h3>Strateji Bazında Performans</h3>
+      <div class="tablewrap"><table id="stratTable">
+        <thead><tr><th>Strateji</th><th>İşlem</th><th>İsabet</th><th>Toplam PnL</th>
+        <th>Ort. PnL</th><th>Profit Factor</th></tr></thead><tbody></tbody>
+      </table></div>
+    </div>
+    <div class="panel">
+      <h3>Çıkış Nedenine Göre</h3>
+      <div class="tablewrap"><table id="exitTable">
+        <thead><tr><th>Neden</th><th>İşlem</th><th>İsabet</th><th>Toplam PnL</th></tr></thead>
+        <tbody></tbody>
+      </table></div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <h3>Katman Bazında Karşılaştırma — <em>"sinyali olan işlemler" vs "olmayanlar"</em></h3>
+    <div class="tablewrap"><table id="layerTable">
+      <thead><tr><th>Katman (eşik ≥60)</th><th>Sinyalli: adet / isabet / ort.PnL</th>
+      <th>Sinyalsiz: adet / isabet / ort.PnL</th><th>Katkı (edge)</th></tr></thead>
+      <tbody></tbody>
+    </table></div>
+    <p class="muted">Bu tablo, "hangi katman gerçekten kâr ettiriyor?" sorusunu veriyle yanıtlar.
+    ≥60 eşiği ayarlardaki <i>confirmation_score</i> değeridir.</p>
+  </div>
+</section>
+
+<!-- ================================ BACKTEST =============================== -->
+<section id="tab-backtest" class="tab">
+  <div class="panel">
+    <h3>Backtest — Aynı strateji kodu, geçmiş veri</h3>
+    <div class="filters">
+      <label>Gün: <input type="number" id="btDays" value="180" min="10" max="1825"></label>
+      <label>Zaman dilimi:
+        <select id="btInterval"><option>4h</option><option>1h</option><option>1d</option></select>
+      </label>
+      <button class="btn" id="btnBacktest">🧪 Backtest Çalıştır</button>
+      <span class="muted" id="btStatus"></span>
+    </div>
+    <p class="muted">Fiyatlar: Binance halka açık OHLCV (anahtarsız; erişilemezse sentetik veri —
+    sonuç o zaman gösterilir). On-chain/DeFi/risk/duygu/makro katmanları backtest'te mock skorla
+    çalışır (Faz 2-4'te gerçek veriye bağlanacak).</p>
+  </div>
+  <div class="cards hidden" id="btCards">
+    <div class="card"><div class="k">Backtest PnL</div><div class="v" id="btPnl">—</div></div>
+    <div class="card"><div class="k">Kazanma Oranı</div><div class="v" id="btWin">—</div></div>
+    <div class="card"><div class="k">İşlem</div><div class="v" id="btCount">—</div></div>
+    <div class="card"><div class="k">MaxDD</div><div class="v" id="btDd">—</div></div>
+    <div class="card"><div class="k">Sharpe</div><div class="v" id="btSharpe">—</div></div>
+    <div class="card"><div class="k">Süre</div><div class="v" id="btDur">—</div></div>
+  </div>
+  <div class="panel hidden" id="btPanel">
+    <h3>Backtest Portföy Eğrisi</h3>
+    <div class="chartbox"><canvas id="btChart"></canvas></div>
+    <div class="tablewrap" style="max-height:320px"><table id="btTrades">
+      <thead><tr><th>Varlık</th><th>Giriş</th><th>Çıkış</th><th>Neden</th><th>PnL</th><th>Skor</th></tr></thead>
+      <tbody></tbody>
+    </table></div>
+    <div id="btWarnings"></div>
+  </div>
+</section>
+
+<!-- ================================ CÜZDANLAR ============================== -->
+<section id="tab-wallets" class="tab">
+  <div class="panel">
+    <h3>Takip Edilen Cüzdanlar <span class="muted">(Faz 2: portföy + hareket takibi aktif)</span></h3>
+    <p class="muted" id="walletStatus">—</p>
+    <div class="filters">
+      <button class="btn" id="btnWalletRefresh">🔄 Portföyleri Hemen Tazele</button>
+      <button class="btn" id="btnHitEval">🎯 İsabet Oranlarını Değerlendir</button>
+      <input id="wAddress" placeholder="0x... / cüzdan adresi">
+      <input id="wLabel" placeholder="etiket (örn. Whale #1)">
+      <select id="wType">
+        <option value="smart_money">akıllı para (kanıtlı trader)</option>
+        <option value="individual_whale">bireysel whale</option>
+        <option value="fund">fon / bilinen yatırımcı</option>
+        <option value="exchange">borsa cüzdanı</option>
+        <option value="market_maker">market maker</option>
+        <option value="team_vesting">ekip / vesting</option>
+      </select>
+      <button class="btn" id="btnAddWallet">+ Ekle</button>
+    </div>
+    <div class="tablewrap"><table id="walletTable">
+      <thead><tr><th>Etiket</th><th>Adres</th><th>Tür</th><th>Portföy (USD)</th>
+      <th>İsabet</th><th>Kaynak</th><th>Son Çekim</th><th>Aktif</th><th>İşlem</th></tr></thead>
+      <tbody></tbody>
+    </table></div>
+    <p class="muted">Cüzdan türü kritiktir: <b>borsa / ekip-vesting / market maker</b>
+    cüzdanlarının hareketi "akıllı para alımı" sayılmaz. İsabet oranı yüksek olan
+    cüzdanların sinyali daha ağır ağırlıklandırılır (0.6x – 1.4x).</p>
+  </div>
+
+  <div class="panel">
+    <h3>🐋 Akıllı Para Sinyalleri (son 7 gün, token bazlı)</h3>
+    <div class="tablewrap"><table id="smTable">
+      <thead><tr><th>Varlık</th><th>Sinyal Skoru</th><th>Güvenlik</th><th>Net Akış</th>
+      <th>Biriktiren Cüzdanlar (kanıt)</th><th>Hariç Tutulanlar</th></tr></thead>
+      <tbody></tbody>
+    </table></div>
+    <p class="muted">≥2 bağımsız cüzdan biriktiriyorsa <b>GÜÇLÜ</b>; tek cüzdan
+    <b>ZAYIF</b>sınyaldır ve karar motorunda diğer katmanların (özellikle risk +
+    teknik) teyidini gerektirir.</p>
+  </div>
+
+  <div class="panel">
+    <h3>Son Cüzdan Hareketleri</h3>
+    <div class="tablewrap"><table id="walletActs">
+      <thead><tr><th>Zaman</th><th>Cüzdan</th><th>Token</th><th>Hareket</th>
+      <th>Delta (USD)</th><th>İsabet</th></tr></thead>
+      <tbody></tbody>
+    </table></div>
+  </div>
+
+  <div class="panel">
+    <h3>Cüzdan Portföy Detayı <span class="muted">(satıra tıkla)</span></h3>
+    <div id="walletDetail" class="muted">Bir cüzdan satırına tıkla…</div>
+  </div>
+</section>
+
+<!-- ================================= AYARLAR =============================== -->
+<section id="tab-settings" class="tab">
+  <div class="grid2">
+    <div class="panel">
+      <h3>Takip Edilen Varlıklar</h3>
+      <div class="filters">
+        <input id="aSymbol" placeholder="örn. ARBUSDT">
+        <input id="aName" placeholder="ad (opsiyonel)">
+        <select id="aCat"><option value="major">majör</option><option value="defi">DeFi</option><option value="other">diğer</option></select>
+        <button class="btn" id="btnAddAsset">+ Varlık Ekle</button>
+      </div>
+      <div class="tablewrap" style="max-height:260px"><table id="assetMgr">
+        <thead><tr><th>Sembol</th><th>Kategori</th><th>Takip</th><th></th></tr></thead>
+        <tbody></tbody>
+      </table></div>
+    </div>
+    <div class="panel">
+      <h3>Veri & Bildirim Durumu</h3>
+      <div class="kv" id="statusKv">—</div>
+      <h3 style="margin-top:14px">Dışa Aktarım</h3>
+      <div class="filters">
+        <a class="btn" href="/api/export/trades.csv?format=csv">İşlemler CSV</a>
+        <a class="btn" href="/api/export/decisions.json">Kararlar JSON</a>
+        <a class="btn" href="/api/export/equity.json">Portföy JSON</a>
+        <a class="btn" href="/docs" target="_blank">API Dokümanı</a>
+      </div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <h3>🔑 Binance API & Canlı İşlem (Gerçek Para — Faz 10)</h3>
+    <div class="kv" id="bnStatus">Binance durumu yükleniyor…</div>
+    <div class="filters">
+      <input id="bnKey" placeholder="Binance API Key" autocomplete="off" style="min-width:200px">
+      <input id="bnSecret" type="password" placeholder="Binance API Secret" autocomplete="off">
+      <label class="muted" title="Testnet = kağıt paralı Binance test ortamı">
+        <input type="checkbox" id="bnTestnet"> Testnet (kağıt para)
+      </label>
+      <button class="btn" id="btnBnSetup">🔑 Anahtarları Kaydet & Canlı Modu Aç</button>
+      <button class="btn" id="btnBnCheck">Bağlantıyı Sorgula</button>
+      <button class="btn danger" id="btnBnDisable">Canlı Modu Kapat</button>
+    </div>
+    <p class="muted">
+      1) Binance → Profile → API Management'dan yeni bir API anahtarı oluştur
+      (izınler: <b>Enable Reading</b> + <b>Enable Spot &amp; Margin Trading</b>;
+      Withdraw kapalı kalsın). 2) Anahtarı buraya gir → Binance'te doğrulanır ve
+      <code>.env</code> dosyasına yazılır (DB'ye asla konmaz). 3) "Canlı Modu Aç"
+      ile emirler GERÇEK PARAYLA gider. Varsayılan önerilen: önce
+      <b>Testnet</b> ile dene. Kill switch + günlük zarar limiti canlı modda da
+      geçerlidir. Yatırım tavsiyesi değildir.
+    </p>
+  </div>
+
+  <div class="panel">
+    <h3>Skor Ağırlıkları, Risk Eşikleri, Ücretler ve Sanal Bakiye</h3>
+    <div class="filters">
+      <button class="btn" id="btnSaveSettings">💾 Kaydet</button>
+      <button class="btn" id="btnReloadSettings">Yeniden Yükle</button>
+      <span class="muted" id="setMsg"></span>
+    </div>
+    <div id="settingsGroups"></div>
+    <p class="muted">Değişiklikler veritabanına yazılır ve bir sonraki çevrimde uygulanır
+    ("Şimdi Analiz Et" ile hemen deneyebilirsin). API anahtarı alanları .env içindedir,
+    panelden görüntülenmez. Koruma alanları (canlı işlem, veritabanı URL'si) değiştirilemez.</p>
+  </div>
+</section>
+</main>
+
+<footer>
+  <span id="footWarn">⚠ SANAL TEST MODU — Yatırım tavsiyesi değildir. Tüm işlemler simülasyondur.</span>
+  <span id="footRight">PaperBot</span>
+</footer>
+
+<div id="toast" class="hidden"></div>
+<script src="app.js"></script>
+</body>
+</html>

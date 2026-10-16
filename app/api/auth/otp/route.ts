@@ -4,15 +4,19 @@ export const runtime = "nodejs"
 
 // Upstash Redis helper
 async function redisCmd(command: string, ...args: (string | number)[]) {
-  const url = process.env.UPSTASH_REDIS_REST_URL
+  const rawUrl = process.env.UPSTASH_REDIS_REST_URL
   const token = process.env.UPSTASH_REDIS_REST_TOKEN
-  if (!url || !token) return null
+  if (!rawUrl || !token) return null
+  const url = rawUrl.replace(/\/+$/, "")
 
   try {
-    const parts = [command, ...args].map(encodeURIComponent).join("/")
-    const res = await fetch(`${url}/${parts}`, {
+    const res = await fetch(url, {
       method: "POST",
-      headers: { Authorization: `Bearer ${token}` },
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify([command, ...args]),
       cache: "no-store",
     })
     if (!res.ok) return null

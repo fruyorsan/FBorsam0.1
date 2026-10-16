@@ -1,0 +1,101 @@
+{
+  "totalTrades": 269,
+  "winningTrades": 112,
+  "losingTrades": 157,
+  "winRate": 41.6,
+  "profitFactor": 1.22,
+  "grossProfit": 530.65,
+  "grossLoss": 434.46,
+  "netReturnPercent": 96.2,
+  "avgTradeReturn": 0.36,
+  "testedPeriod": "1 Yıllık Gerçek Seans Geçmişi (2025 - 2026)",
+  "topPerformers": [
+    {
+      "ticker": "SASA",
+      "trades": 7,
+      "wins": 6,
+      "losses": 1,
+      "winRate": 85.7,
+      "netPnlPct": 27.2
+    },
+    {
+      "ticker": "EREGL",
+      "trades": 10,
+      "wins": 7,
+      "losses": 3,
+      "winRate": 70,
+      "netPnlPct": 21.73
+    },
+    {
+      "ticker": "TUPRS",
+      "trades": 7,
+      "wins": 5,
+      "losses": 2,
+      "winRate": 71.4,
+      "netPnlPct": 19.4
+    },
+    {
+      "ticker": "BIMAS",
+      "trades": 11,
+      "wins": 7,
+      "losses": 4,
+      "winRate": 63.6,
+      "netPnlPct": 19.4
+    },
+    {
+      "ticker": "SISE",
+      "trades": 11,
+      "wins": 7,
+      "losses": 4,
+      "winRate": 63.6,
+      "netPnlPct": 19.11
+    },
+    {
+      "ticker": "TCELL",
+      "trades": 6,
+      "wins": 4,
+      "losses": 2,
+      "winRate": 66.7,
+      "netPnlPct": 15.85
+    },
+    {
+      "ticker": "PETKM",
+      "trades": 7,
+      "wins": 4,
+      "losses": 3,
+      "winRate": 57.1,
+      "netPnlPct": 11.6
+    },
+    {
+      "ticker": "YKBNK",
+      "trades": 10,
+      "wins": 5,
+      "losses": 5,
+      "winRate": 50,
+      "netPnlPct": 11
+    },
+    {
+      "ticker": "BRSAN",
+      "trades": 4,
+      "wins": 3,
+      "losses": 1,
+      "winRate": 75,
+      "netPnlPct": 9.75
+    },
+    {
+      "ticker": "GUBRF",
+      "trades": 8,
+      "wins": 4,
+      "losses": 4,
+      "winRate": 50,
+      "netPnlPct": 8.8
+    }
+  ],
+  "strategyName": "İkili Hibrit BIST 30 Modeli (Dip Dönüşü + Hacimli Trend Kırılımı)",
+  "rules": [
+    "1. Dip Dönüşü (Oversold Bounce): RSI <= 36 seviyesinden yeşil mumla dönüş (Yüksek Başarı Oranı).",
+    "2. Hacimli Trend Kırılımı: Fiyat > EMA20 > EMA50 + RVOL >= 1.25x balina hacim desteği.",
+    "3. Dinamik Risk Yönetimi: Hedef: +%5.2, Kesin Stop-Loss: -%2.6 (R:R = 1:2.0 pozitif beklenti).",
+    "4. Zaman Koruması: 8 bar içinde hedefe ulaşmayan yatay pozisyonları risksiz kapatma."
+  ]
+}

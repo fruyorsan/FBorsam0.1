@@ -1,0 +1,21 @@
+name: 24/7 Algo Bot Cron
+
+on:
+  schedule:
+    # Her 5 dakikada bir buluttan otomatik tetikle
+    - cron: '*/5 * * * *'
+  workflow_dispatch:
+
+jobs:
+  ping-bot-cron:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger Bot Cron (1-Minute High-Frequency Loop)
+        run: |
+          for i in {1..5}; do
+            echo "Checking bot cron (cycle $i/5)..."
+            curl -s -f -m 30 https://frborsam.vercel.app/api/bot/cron || echo "Cron triggered"
+            if [ $i -lt 5 ]; then
+              sleep 58
+            fi
+          done

@@ -30,6 +30,37 @@ export const cryptoAssets: Record<string, { binance: string; name: string }> = {
   LINK: { binance: "LINKUSDT", name: "Chainlink" },
 }
 
+export const COINGECKO_MAP: Record<string, string> = {
+  bitcoin: "BTC",
+  ethereum: "ETH",
+  pepe: "PEPE",
+  solana: "SOL",
+  dogecoin: "DOGE",
+  "shiba-inu": "SHIB",
+  bonk: "BONK",
+  dogwifhat: "WIF",
+  "book-of-meme": "BOME",
+  binancecoin: "BNB",
+  ripple: "XRP",
+  sui: "SUI",
+  "avalanche-2": "AVAX",
+  cardano: "ADA",
+  near: "NEAR",
+  "render-token": "RENDER",
+  "fetch-ai": "FET",
+  chainlink: "LINK",
+  floki: "FLOKI",
+  "pudgy-penguins": "PENGU",
+  tron: "TRX",
+  polkadot: "DOT",
+  polygon: "POL",
+  uniswap: "UNI",
+  litecoin: "LTC",
+  arbitrum: "ARB",
+  optimism: "OP",
+  aptos: "APT",
+}
+
 const assets: Record<string, Asset> = {
   AAPL:{yahoo:"AAPL",name:"Apple",market:"ABD"},MSFT:{yahoo:"MSFT",name:"Microsoft",market:"ABD"},NVDA:{yahoo:"NVDA",name:"NVIDIA",market:"ABD"},GOOGL:{yahoo:"GOOGL",name:"Alphabet",market:"ABD"},AMZN:{yahoo:"AMZN",name:"Amazon",market:"ABD"},META:{yahoo:"META",name:"Meta",market:"ABD"},TSLA:{yahoo:"TSLA",name:"Tesla",market:"ABD"},
   XU100:{yahoo:"XU100.IS",name:"BIST 100",market:"MAKRO"},XU030:{yahoo:"XU030.IS",name:"BIST 30",market:"MAKRO"},SP500:{yahoo:"^GSPC",name:"S&P 500",market:"MAKRO"},NASDAQ:{yahoo:"^IXIC",name:"Nasdaq",market:"MAKRO"},DJI:{yahoo:"^DJI",name:"Dow Jones",market:"MAKRO"},USDTRY:{yahoo:"TRY=X",name:"Dolar / TL",market:"MAKRO"},EURTRY:{yahoo:"EURTRY=X",name:"Euro / TL",market:"MAKRO"},XAUUSD:{yahoo:"GC=F",name:"Ons Altın",market:"MAKRO"},BRENT:{yahoo:"BZ=F",name:"Brent Petrol",market:"MAKRO"},
@@ -72,14 +103,59 @@ async function getSession() {
 }
 
 async function fetchBinanceCrypto(symbol: string, interval = "1d") {
-  const c = cryptoAssets[symbol]
-  if (!c) throw new Error("Desteklenmeyen kripto sembolü")
+  const c = cryptoAssets[symbol] ?? { binance: `${symbol}USDT`, name: symbol }
   const controller = new AbortController()
   const timeout = setTimeout(() => controller.abort(), 8000)
-  const valid = ["1m", "5m", "15m", "1h", "1d"]
-  const bInterval = valid.includes(interval) ? interval : "1d"
-  const isIntra = ["1m", "5m", "15m"].includes(bInterval)
-  const isHourly = bInterval === "1h"
+  
+  let bInterval = "15m"
+  let limit = 96
+  let isIntra = true
+  let isHourly = false
+
+  if (interval === "1m") {
+    bInterval = "1m"
+    limit = 100
+    isIntra = true
+  } else if (interval === "5m") {
+    bInterval = "5m"
+    limit = 100
+    isIntra = true
+  } else if (interval === "15m") {
+    bInterval = "15m"
+    limit = 96
+    isIntra = false
+  } else if (interval === "1h") {
+    bInterval = "1h"
+    limit = 72
+    isIntra = false
+    isHourly = true
+  } else if (interval === "1w") {
+    bInterval = "1h"
+    limit = 168
+    isIntra = false
+    isHourly = true
+  } else if (interval === "1mo") {
+    bInterval = "4h"
+    limit = 180
+    isIntra = false
+  } else if (interval === "3mo") {
+    bInterval = "1d"
+    limit = 90
+    isIntra = false
+  } else if (interval === "1y") {
+    bInterval = "1d"
+    limit = 365
+    isIntra = false
+  } else if (interval === "all") {
+    bInterval = "1w"
+    limit = 260
+    isIntra = false
+  } else {
+    // 1d: 24 saatlik kesintisiz gün içi seans (96 x 15dk = 24 saat)
+    bInterval = "15m"
+    limit = 96
+    isIntra = true
+  }
 
   try {
     const [tickerRes, klinesRes] = await Promise.all([
@@ -88,7 +164,7 @@ async function fetchBinanceCrypto(symbol: string, interval = "1d") {
         signal: controller.signal,
         next: { revalidate: 3 },
       }),
-      fetch(`https://api.binance.com/api/v3/klines?symbol=${c.binance}&interval=${bInterval}&limit=70`, {
+      fetch(`https://api.binance.com/api/v3/klines?symbol=${c.binance}&interval=${bInterval}&limit=${limit}`, {
         headers,
         signal: controller.signal,
         next: { revalidate: isIntra ? 3 : 30 },
@@ -101,11 +177,11 @@ async function fetchBinanceCrypto(symbol: string, interval = "1d") {
       const d = new Date(Number(k[0]))
       let dateStr: string
       if (isIntra) {
-        dateStr = new Intl.DateTimeFormat("tr-TR", { hour: "2-digit", minute: "2-digit" }).format(d)
-      } else if (isHourly) {
-        dateStr = new Intl.DateTimeFormat("tr-TR", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" }).format(d)
+        dateStr = new Intl.DateTimeFormat("tr-TR", { timeZone: "Europe/Istanbul", hour: "2-digit", minute: "2-digit" }).format(d)
+      } else if (isHourly || interval === "15m") {
+        dateStr = new Intl.DateTimeFormat("tr-TR", { timeZone: "Europe/Istanbul", day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" }).format(d)
       } else {
-        dateStr = new Intl.DateTimeFormat("tr-TR", { day: "2-digit", month: "short" }).format(d)
+        dateStr = new Intl.DateTimeFormat("tr-TR", { timeZone: "Europe/Istanbul", day: "2-digit", month: "short" }).format(d)
       }
       return {
         date: dateStr,
@@ -117,7 +193,7 @@ async function fetchBinanceCrypto(symbol: string, interval = "1d") {
       }
     }).filter(c => [c.open, c.high, c.low, c.close].every(Number.isFinite))
 
-    if (candles.length < 10) throw new Error("Yetersiz kripto geçmişi")
+    if (candles.length < 15) throw new Error("Yetersiz kripto geçmişi")
     const technical = analyzeCandles(candles)
     const price = parseFloat(ticker.lastPrice)
     const change = parseFloat(ticker.priceChangePercent)
@@ -150,8 +226,8 @@ async function fetchChart(symbol: string, intervalOrRange = "1d", explicitInterv
   const item = assets[symbol]
   if (!item || !item.yahoo) throw new Error("Desteklenmeyen sembol")
 
-  let range = "1y"
-  let yInterval = "1d"
+  let range = "1d"
+  let yInterval = "5m"
 
   if (explicitInterval) {
     range = intervalOrRange
@@ -162,7 +238,7 @@ async function fetchChart(symbol: string, intervalOrRange = "1d", explicitInterv
       range = "1d"
       yInterval = "1m"
     } else if (interval === "5m") {
-      range = "5d"
+      range = "1d"
       yInterval = "5m"
     } else if (interval === "15m") {
       range = "5d"
@@ -170,13 +246,30 @@ async function fetchChart(symbol: string, intervalOrRange = "1d", explicitInterv
     } else if (interval === "1h") {
       range = "1mo"
       yInterval = "1h"
-    } else {
+    } else if (interval === "1w") {
+      range = "5d"
+      yInterval = "15m"
+    } else if (interval === "1mo") {
+      range = "1mo"
+      yInterval = "1d"
+    } else if (interval === "3mo") {
+      range = "3mo"
+      yInterval = "1d"
+    } else if (interval === "1y") {
       range = "1y"
       yInterval = "1d"
+    } else if (interval === "all") {
+      range = "5y"
+      yInterval = "1wk"
+    } else {
+      // 1d: 1 Günlük grafik - Gün içi seans hareketi (98 adet 5dk seans mumu)
+      range = "1d"
+      yInterval = "5m"
     }
   }
 
-  const isIntra = ["1m", "5m", "15m"].includes(yInterval)
+  const isIntra = ["1m", "5m"].includes(yInterval) && range === "1d"
+  const isMultiDayIntra = (["5m", "15m"].includes(yInterval) && range === "5d") || intervalOrRange === "1w"
   const isHourly = yInterval === "1h"
 
   const controller = new AbortController(), timeout = setTimeout(() => controller.abort(), 8000)
@@ -186,20 +279,43 @@ async function fetchChart(symbol: string, intervalOrRange = "1d", explicitInterv
     const payload = await response.json()
     const result = payload?.chart?.result?.[0], quote = result?.indicators?.quote?.[0]
     if (!result?.timestamp || !quote) throw new Error("Eksik piyasa yanıtı")
-    const candles: Candle[] = result.timestamp.flatMap((t: number, i: number) => {
-      const open = quote.open?.[i], high = quote.high?.[i], low = quote.low?.[i], close = quote.close?.[i], volume = quote.volume?.[i] ?? 0
-      if (![open, high, low, close].every(Number.isFinite)) return []
-      const d = new Date(t * 1000)
-      let dateStr: string
-      if (isIntra) {
-        dateStr = new Intl.DateTimeFormat("tr-TR", { hour: "2-digit", minute: "2-digit" }).format(d)
-      } else if (isHourly) {
-        dateStr = new Intl.DateTimeFormat("tr-TR", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" }).format(d)
-      } else {
-        dateStr = new Intl.DateTimeFormat("tr-TR", { day: "2-digit", month: "short" }).format(d)
-      }
-      return [{ date: dateStr, open, high, low, close, volume }]
-    })
+
+    const parseCandles = (res: any, q: any, is1d: boolean) => {
+      return (res.timestamp as number[]).flatMap((t: number, i: number) => {
+        const open = q.open?.[i], high = q.high?.[i], low = q.low?.[i], close = q.close?.[i], volume = q.volume?.[i] ?? 0
+        if (![open, high, low, close].every(Number.isFinite)) return []
+        const d = new Date(t * 1000)
+        let dateStr: string
+        if (is1d) {
+          dateStr = new Intl.DateTimeFormat("tr-TR", { timeZone: "Europe/Istanbul", hour: "2-digit", minute: "2-digit" }).format(d)
+        } else if (isMultiDayIntra || isHourly) {
+          dateStr = new Intl.DateTimeFormat("tr-TR", { timeZone: "Europe/Istanbul", day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" }).format(d)
+        } else {
+          dateStr = new Intl.DateTimeFormat("tr-TR", { timeZone: "Europe/Istanbul", day: "2-digit", month: "short" }).format(d)
+        }
+        return [{ date: dateStr, open, high, low, close, volume }]
+      })
+    }
+
+    let candles: Candle[] = parseCandles(result, quote, isIntra)
+
+    // Seans yeni açılmışsa veya 1 günlük veride 15 mumdan az varsa güvenli fallback (5d / 15m)
+    if (candles.length < 15 && range === "1d") {
+      try {
+        const fbRes = await fetch(`https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(item.yahoo)}?range=5d&interval=15m&events=div%2Csplits`, { signal: controller.signal, headers, next: { revalidate: 30 } })
+        if (fbRes.ok) {
+          const fbPayload = await fbRes.json()
+          const fbResult = fbPayload?.chart?.result?.[0], fbQuote = fbResult?.indicators?.quote?.[0]
+          if (fbResult?.timestamp && fbQuote) {
+            const fbCandles = parseCandles(fbResult, fbQuote, false)
+            if (fbCandles.length >= 15) {
+              return { item, meta: fbResult.meta, candles: fbCandles }
+            }
+          }
+        }
+      } catch {}
+    }
+
     return { item, meta: result.meta, candles }
   } finally {
     clearTimeout(timeout)
@@ -252,9 +368,32 @@ export async function GET(request: NextRequest) {
   const rl = checkRateLimit(`market:${ip}`, 60, 60_000)
   if (!rl.allowed) return rateLimitResponse(rl.resetTime)
 
-  const rawSymbol = request.nextUrl.searchParams.get("symbol") ?? "TUPRS"
+  const rawSymbol = request.nextUrl.searchParams.get("symbol")
+  const rawCryptoId = request.nextUrl.searchParams.get("cryptoId")
   const rawInterval = request.nextUrl.searchParams.get("interval")
-  const symbol = sanitizeSymbol(rawSymbol) ?? "TUPRS"
+
+  let symbol = "TUPRS"
+  if (rawCryptoId) {
+    const cid = rawCryptoId.trim().toLowerCase()
+    const mapped = COINGECKO_MAP[cid] || cid.toUpperCase()
+    symbol = sanitizeSymbol(mapped) ?? "BTC"
+    if (!cryptoAssets[symbol]) {
+      cryptoAssets[symbol] = { binance: `${symbol}USDT`, name: symbol }
+      assets[symbol] = { binance: `${symbol}USDT`, name: symbol, market: "Kripto" }
+    }
+  } else if (rawSymbol) {
+    if (rawSymbol.startsWith("crypto:")) {
+      const cid = rawSymbol.slice(7).trim().toLowerCase()
+      const mapped = COINGECKO_MAP[cid] || cid.toUpperCase()
+      symbol = sanitizeSymbol(mapped) ?? "BTC"
+      if (!cryptoAssets[symbol]) {
+        cryptoAssets[symbol] = { binance: `${symbol}USDT`, name: symbol }
+        assets[symbol] = { binance: `${symbol}USDT`, name: symbol, market: "Kripto" }
+      }
+    } else {
+      symbol = sanitizeSymbol(rawSymbol) ?? "TUPRS"
+    }
+  }
   const interval = sanitizeInterval(rawInterval)
 
   // Cache TTL per interval
@@ -295,7 +434,7 @@ export async function GET(request: NextRequest) {
   const rawSearch = request.nextUrl.searchParams.get("cryptoSearch")
   if (rawSearch !== null) {
     const q = sanitizeSearchQuery(rawSearch)
-    if (!q || q.length < 2) return Response.json({ results: [] })
+    if (!q || q.length < 2) return Response.json({ assets: [], results: [] })
     const cacheKey = `crypto-search:${q.toLowerCase()}`
     const cached = cacheGet<object>(cacheKey)
     if (cached) return Response.json(cached)
@@ -304,7 +443,7 @@ export async function GET(request: NextRequest) {
         `https://api.coingecko.com/api/v3/search?query=${encodeURIComponent(q)}`,
         { next: { revalidate: 120 } }
       )
-      if (!r.ok) return Response.json({ results: [] })
+      if (!r.ok) return Response.json({ assets: [], results: [] })
       const p = await r.json()
       const results = (p.coins ?? []).slice(0, 20).map((c: { id: string; symbol: string; name: string; market_cap_rank?: number | null; large?: string | null; thumb?: string | null }) => ({
         id: c.id,
@@ -312,36 +451,26 @@ export async function GET(request: NextRequest) {
         name: c.name,
         rank: c.market_cap_rank ?? null,
         image: c.large ?? c.thumb ?? null,
-        market: "Kripto",
+        market: "Kripto" as const,
       }))
-      const out = { results }
+      const out = { assets: results, results }
       cacheSet(cacheKey, out, 120)
       return Response.json(out)
     } catch {
-      return Response.json({ results: [] })
+      return Response.json({ assets: [], results: [] })
     }
   }
 
   // 4. News
   if (request.nextUrl.searchParams.get("news") === "1") {
-    const cacheKey = "news:global"
-    const cached = cacheGet<object>(cacheKey)
-    if (cached) return Response.json(cached)
-    const groups = await Promise.all([
-      fetchNews("Borsa Istanbul Turkey economy", 6),
-      fetchNews("S&P 500 Nasdaq Federal Reserve markets", 6),
-      fetchNews("gold oil markets", 4),
-    ])
-    const seen = new Set<string>()
-    const news = groups.flat().filter(item => {
-      const key = item.url ?? item.title
-      if (seen.has(key)) return false
-      seen.add(key)
-      return true
-    }).sort((a, b) => (b.publishedAt ?? "").localeCompare(a.publishedAt ?? "")).slice(0, 12)
-    const out = { news, source: "Yahoo Finance", topics: ["BIST", "ABD", "Emtia"] }
-    cacheSet(cacheKey, out, 180)
-    return Response.json(out)
+    try {
+      const { getLiveNews } = await import("@/lib/news-feed")
+      const news = await getLiveNews()
+      const out = { news, source: "Canlı Piyasa & Kripto Akışı", topics: ["Kripto", "ABD Makro", "Piyasalar"] }
+      return Response.json(out)
+    } catch {
+      return Response.json({ news: [], source: "Piyasa Akışı", topics: [] })
+    }
   }
 
   // 5. Equity / Index chart via Yahoo
@@ -368,7 +497,9 @@ export async function GET(request: NextRequest) {
       delayed: true,
     }
     cacheSet(cacheKey, result, cacheTtl)
-    return Response.json(result)
+    return Response.json(result, {
+      headers: { "Cache-Control": "public, s-maxage=10, stale-while-revalidate=30" },
+    })
   } catch {
     return Response.json(
       { error: "Piyasa verisi alınamadı", symbol, source: "Yahoo Finance" },
@@ -423,6 +554,9 @@ export async function POST(request: Request) {
       }
     })
   )
-  return Response.json({ data, source: "BysFurkan Live", delayed: true })
+  return Response.json(
+    { data, source: "BysFurkan Live", delayed: true },
+    { headers: { "Cache-Control": "public, s-maxage=5, stale-while-revalidate=15" } }
+  )
 }
 

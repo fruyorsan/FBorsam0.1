@@ -20,11 +20,31 @@ const round = (value: number, digits?: number) => {
   return Math.round(v * 100) / 100
 }
 
-function ema(values: number[], period: number) {
+export function ema(values: number[], period: number): number[] {
   if (!values.length) return []
   const k = 2 / (period + 1)
-  const result = [values[0]]
-  for (let i = 1; i < values.length; i++) result.push(values[i] * k + result[i - 1] * (1 - k))
+  const result: number[] = new Array(values.length)
+
+  if (values.length < period) {
+    let sum = 0
+    for (let i = 0; i < values.length; i++) {
+      sum += values[i]
+      result[i] = sum / (i + 1)
+    }
+    return result
+  }
+
+  let sum = 0
+  for (let i = 0; i < period; i++) {
+    sum += values[i]
+    result[i] = sum / (i + 1)
+  }
+  // Standart TA-Lib / TradingView EMA Başlatması: İlk period elemanın tam SMA ortalamasıyla başla
+  result[period - 1] = sum / period
+
+  for (let i = period; i < values.length; i++) {
+    result[i] = values[i] * k + result[i - 1] * (1 - k)
+  }
   return result
 }
 
@@ -38,7 +58,7 @@ function rsi(values: number[], period = 14) {
     losses = (losses * (period - 1) + Math.max(-change, 0)) / period
   }
   if (losses === 0) return gains === 0 ? 50 : 100
-  return finite(100 - 100 / (1 + gains / losses), 50)
+  return clamp(finite(100 - 100 / (1 + gains / losses), 50), 0, 100)
 }
 
 function atr(candles: Candle[], period = 14) {
@@ -47,12 +67,24 @@ function atr(candles: Candle[], period = 14) {
   return avg(ranges.slice(-period))
 }
 
-function stochastic(candles: Candle[], period = 14) {
-  const window = candles.slice(-period)
-  if (!window.length) return 50
-  const low = Math.min(...window.map(c => c.low))
-  const high = Math.max(...window.map(c => c.high))
-  return high === low ? 50 : finite(((window.at(-1)!.close - low) / (high - low)) * 100, 50)
+/**
+ * Slow Stochastic Oscillator (%K, 3-period smoothed SMA)
+ * Ham tek-mum Fast %K gürültüsünü (whipsaw) yok eder, gerçek dönüşleri saptar.
+ */
+function stochastic(candles: Candle[], period = 14, smoothK = 3): number {
+  if (candles.length < Math.min(period, 7)) return 50
+  const fastKList: number[] = []
+  const startIdx = Math.max(0, candles.length - smoothK)
+  for (let i = startIdx; i < candles.length; i++) {
+    const windowStart = Math.max(0, i - period + 1)
+    const window = candles.slice(windowStart, i + 1)
+    const low = Math.min(...window.map(c => c.low))
+    const high = Math.max(...window.map(c => c.high))
+    const currentClose = candles[i].close
+    const val = high === low ? 50 : clamp(((currentClose - low) / (high - low)) * 100, 0, 100)
+    fastKList.push(val)
+  }
+  return clamp(round(fastKList.length ? avg(fastKList) : 50, 2), 0, 100)
 }
 
 function signalFromScore(score: number): Signal {
@@ -64,31 +96,37 @@ function signalFromScore(score: number): Signal {
 }
 
 export function analyzeCandles(candles: Candle[]) {
-  if (candles.length < 30) throw new Error("Teknik analiz için yeterli mum yok")
+  if (candles.length < 15) throw new Error("Teknik analiz için en az 15 mum gerekli")
   const closes = candles.map(c => c.close)
   const price = closes.at(-1)!
-  const sma20 = avg(closes.slice(-20))
-  const sma50 = avg(closes.slice(-50))
-  const ema12 = ema(closes, 12)
-  const ema26 = ema(closes, 26)
-  const macdSeries = ema12.map((value, i) => value - (ema26[i] ?? value))
+  const sma20 = avg(closes.slice(-Math.min(20, closes.length)))
+  const sma50 = avg(closes.slice(-Math.min(50, closes.length)))
+  const ema12Series = ema(closes, 12)
+  const ema26Series = ema(closes, 26)
+  const ema20Val = ema(closes, 20).at(-1) ?? sma20
+  const ema50Val = ema(closes, 50).at(-1) ?? sma50
+  const macdSeries = ema12Series.map((value, i) => value - (ema26Series[i] ?? value))
   const macd = macdSeries.at(-1) ?? 0
   const macdSignal = ema(macdSeries, 9).at(-1) ?? 0
+  const macdHist = macd - macdSignal
   const currentRsi = rsi(closes)
   const currentStoch = stochastic(candles)
   const currentAtr = atr(candles)
-  const deviation = Math.sqrt(avg(closes.slice(-20).map(v => (v - sma20) ** 2)))
+  const deviation = Math.sqrt(avg(closes.slice(-Math.min(20, closes.length)).map(v => (v - sma20) ** 2)))
   const upper = sma20 + deviation * 2
   const lower = sma20 - deviation * 2
   const bandwidthPosition = clamp(upper === lower ? 50 : ((price - lower) / (upper - lower)) * 100, 0, 100)
-  const support = Math.min(...candles.slice(-20).map(c => c.low))
-  const resistance = Math.max(...candles.slice(-20).map(c => c.high))
+  const support = Math.min(...candles.slice(-Math.min(30, candles.length)).map(c => c.low))
+  const resistance = Math.max(...candles.slice(-Math.min(30, candles.length)).map(c => c.high))
   const volumes = candles.map(c => c.volume).filter(Number.isFinite)
   const lastVolume = volumes.at(-1) ?? 0
-  const avgVolume = avg(volumes.slice(-20))
+  const avgVolume = avg(volumes.slice(-Math.min(20, volumes.length)))
   const volumeRatio = avgVolume ? lastVolume / avgVolume : 1
+  // RVOL (Relative Volume): Son mumun hacmi, son 24 periyotluk normal ortalamaya göre kaç kat yüksek?
+  const dayAvgVolume = avg(volumes.slice(-Math.min(24, volumes.length)))
+  const rvol = dayAvgVolume ? lastVolume / dayAvgVolume : volumeRatio
   const atrPercent = price ? (currentAtr / price) * 100 : 0
-  const swingWindow = candles.slice(-90)
+  const swingWindow = candles.slice(-Math.min(90, candles.length))
   const swingLow = Math.min(...swingWindow.map(c => c.low))
   const swingHigh = Math.max(...swingWindow.map(c => c.high))
   const swingRange = swingHigh - swingLow
@@ -101,13 +139,41 @@ export function analyzeCandles(candles: Candle[]) {
     high: swingHigh,
   }
   let score = 0
-  score += price > sma20 ? 1 : -1
-  score += price > sma50 ? 1 : -1
-  score += macd > macdSignal ? 1 : -1
-  score += currentRsi > 55 && currentRsi < 72 ? 1 : currentRsi > 78 || currentRsi < 30 ? -1 : 0
-  score += currentStoch > 55 && currentStoch < 82 ? 1 : currentStoch > 88 ? -1 : 0
+  // 0. RVOL / Gerçek Balina Para Girişi Desteği (Hacimsiz yükselişleri cezalandır, güçlü girişi ödüllendir)
+  if (rvol >= 1.8) score += 2 // Güçlü para girişi
+  else if (rvol < 0.8) score -= 1 // Hacimsiz ölü piyasa
+
+  // 1. Trend (EMA20 & EMA50 Üstel Ağırlıklı Ortalamalar)
+  if (price > ema20Val && ema20Val > ema50Val) score += 2
+  else if (price > ema20Val) score += 1
+  else if (price < ema20Val && ema20Val < ema50Val) score -= 2
+  else score -= 1
+
+  // 2. Momentum (MACD & Histogram İvmesi)
+  if (macd > macdSignal && macdHist >= 0) score += 1
+  else if (macd < macdSignal) score -= 1
+
+  // 3. RSI (Aşırı Alım Tepe Cezası & Sağlıklı Düzeltme Alanı)
+  if (currentRsi >= 70) score -= 3 // Tepe / Aşırı Alım — ASLA ALMA!
+  else if (currentRsi >= 62) score -= 1 // Şişmiş bölge
+  else if (currentRsi >= 40 && currentRsi <= 55) score += 2 // İdeal sağlıklı düzeltme / birikim
+  else if (currentRsi <= 32) score += 2 // Derin dip tepki bölgesi
+
+  // 4. Stochastic (Slow %K)
+  if (currentStoch >= 80) score -= 2 // Stokastik tepe!
+  else if (currentStoch >= 70) score -= 1
+  else if (currentStoch <= 25) score += 2 // Stokastik dip
+
+  // 5. Bollinger Bandı Konumu (%B)
+  if (bandwidthPosition >= 80) score -= 2 // Üst banda aşırı gerilmiş
+  else if (bandwidthPosition <= 25) score += 1 // Alt bant desteği
+
+  // 6. Hacim Teyidi
+  if (volumeRatio >= 1.2 && price > ema20Val) score += 1
+  else if (volumeRatio < 0.6) score -= 1
+
   const signal = signalFromScore(score)
-  const confidence = Math.min(88, Math.max(48, 52 + Math.abs(score) * 7))
+  const confidence = Math.min(92, Math.max(45, 50 + Math.abs(score) * 6))
 
   const rsiRead: IndicatorRead =
     currentRsi >= 70 ? { key: "rsi", group: "RSI · GÜÇ", title: "AŞIRI ALIM", verdict: "neg", note: "Momentum aşırı alım bölgesinde; geri çekilme riski var." }
@@ -117,8 +183,8 @@ export function analyzeCandles(candles: Candle[]) {
     : { key: "rsi", group: "RSI · GÜÇ", title: "DENGELİ", verdict: "neutral", note: "Fiyat momentumu aşırı bölgelere girmemiş." }
 
   const emaRead: IndicatorRead =
-    price > sma20 && sma20 > sma50 ? { key: "ema", group: "EMA · TREND", title: "YUKARI TREND", verdict: "pos", note: "Fiyat EMA20 ve EMA50 üzerinde; yükseliş teyitli." }
-    : price < sma20 && sma20 < sma50 ? { key: "ema", group: "EMA · TREND", title: "AŞAĞI BASKI", verdict: "neg", note: "EMA20, EMA50'nin altında; yükseliş teyitsiz." }
+    price > ema20Val && ema20Val > ema50Val ? { key: "ema", group: "EMA · TREND", title: "YUKARI TREND", verdict: "pos", note: "Fiyat EMA20 ve EMA50 üzerinde; yükseliş teyitli." }
+    : price < ema20Val && ema20Val < ema50Val ? { key: "ema", group: "EMA · TREND", title: "AŞAĞI BASKI", verdict: "neg", note: "EMA20, EMA50'nin altında; düşüş baskısı sürüyor." }
     : { key: "ema", group: "EMA · TREND", title: "YATAY", verdict: "neutral", note: "Ortalamalar iç içe; net yön oluşmamış." }
 
   const macdRead: IndicatorRead =
@@ -135,25 +201,44 @@ export function analyzeCandles(candles: Candle[]) {
     : currentStoch <= 20 ? { key: "stochastic", group: "STOCHASTIC · KISA DÖNÜŞ", title: "AŞIRI SATIM", verdict: "pos", note: "Kısa vadeli tepki alımı gelebilir." }
     : { key: "stochastic", group: "STOCHASTIC · KISA DÖNÜŞ", title: "DENGELİ", verdict: "neutral", note: "Kısa vadeli momentum dengeli." }
 
-  const volumeLabel = volumeRatio >= 1.5 ? "YÜKSEK HACİM" : volumeRatio <= 0.6 ? "DÜŞÜK HACİM" : "NORMAL HACİM"
+  const volumeLabel = rvol >= 1.8 ? "BALİNA GİRİŞİ (RVOL)" : volumeRatio >= 1.5 ? "YÜKSEK HACİM" : volumeRatio <= 0.6 ? "DÜŞÜK HACİM" : "NORMAL HACİM"
   const volatilityLabel = atrPercent >= 3 ? "YÜKSEK OYNAKLIK" : atrPercent >= 1.5 ? "ORTA OYNAKLIK" : "DÜŞÜK OYNAKLIK"
   const riskRead: IndicatorRead = {
     key: "risk", group: "HACİM / ATR · RİSK",
     title: `${volumeLabel} · ${volatilityLabel}`,
-    verdict: volumeRatio >= 1.5 ? "pos" : volumeRatio <= 0.6 ? "neg" : "neutral",
-    note: `Ortalama günlük hareket fiyatın %${round(atrPercent, 1)}'i; işlem hacmi ortalamanın ${round(volumeRatio, 1)} katı.`,
+    verdict: rvol >= 1.8 ? "pos" : volumeRatio <= 0.6 ? "neg" : "neutral",
+    note: `RVOL: ${round(rvol, 1)}x | İşlem hacmi ortalamanın ${round(volumeRatio, 1)} katı; oynaklık %${round(atrPercent, 1)}.`,
   }
   const breakdown: IndicatorRead[] = [rsiRead, emaRead, macdRead, bollingerRead, stochRead, riskRead]
 
   return {
     price: round(price), signal, confidence, support: round(support), resistance: round(resistance),
     values: {
-      rsi: round(currentRsi), macd: round(macd, 3), macdSignal: round(macdSignal, 3), sma20: round(sma20), sma50: round(sma50),
-      bollinger: round(bandwidthPosition), stochastic: round(currentStoch), atr: round(currentAtr, 3), atrPercent: round(atrPercent), volumeRatio: round(volumeRatio),
+      rsi: round(currentRsi), macd: round(macd, 4), macdSignal: round(macdSignal, 4), macdHist: round(macdHist, 4),
+      sma20: round(sma20), sma50: round(sma50), ema20: round(ema20Val), ema50: round(ema50Val),
+      bollinger: round(bandwidthPosition), stochastic: round(currentStoch), atr: round(currentAtr, 4), atrPercent: round(atrPercent), volumeRatio: round(volumeRatio),
+      rvol: round(rvol, 2),
     },
     fibonacci: Object.fromEntries(Object.entries(fibonacci).map(([k, v]) => [k, round(v)])) as typeof fibonacci,
     breakdown,
-    chart: candles.slice(-70).map((c, i, rows) => ({ date: c.date, price: round(c.close), sma: round(avg(rows.slice(Math.max(0, i - 19), i + 1).map(x => x.close))) })),
+    chart: (() => {
+      const sma20Series = candles.map((_, idx) => {
+        const window = candles.slice(Math.max(0, idx - 19), idx + 1)
+        return avg(window.map(x => x.close))
+      })
+      const chartSlice = candles.slice(-70)
+      const offset = candles.length - chartSlice.length
+      return chartSlice.map((c, i) => ({
+        date: c.date,
+        price: round(c.close),
+        open: round(c.open),
+        high: round(c.high),
+        low: round(c.low),
+        close: round(c.close),
+        volume: round(c.volume ?? 0),
+        sma: round(sma20Series[offset + i]),
+      }))
+    })(),
   }
 }
 
@@ -164,7 +249,8 @@ export function horizonAdvice(candles: Candle[]) {
     { key: "aylik", label: "Aylık", slice: 180 },
   ]
   return configurations.map(config => {
-    const result = analyzeCandles(candles.slice(-Math.max(config.slice, 30)))
+    const minSlice = Math.min(candles.length, Math.max(config.slice, 15))
+    const result = analyzeCandles(candles.slice(-minSlice))
     const action = result.signal.includes("AL") ? "Geri çekilmelerde kademeli izlenebilir" : result.signal.includes("SAT") ? "Riski azalt, destek tepkisini bekle" : "Pozisyonu koru, kırılımı bekle"
     return { ...config, signal: result.signal, confidence: result.confidence, action, invalidation: result.support, target: result.resistance }
   })

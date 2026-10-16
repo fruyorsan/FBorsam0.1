@@ -1,0 +1,32 @@
+{
+  "days": 90,
+  "symbols": [
+    "BTCUSDT",
+    "ETHUSDT",
+    "SOLUSDT",
+    "BNBUSDT",
+    "AVAXUSDT"
+  ],
+  "otomasyon_2": {
+    "start": 10000.0,
+    "final": 9402.252429452285,
+    "net_pnl": -597.7475705477154,
+    "profit_pct": -5.977475705477155,
+    "trades": 121,
+    "win_rate": 45.45,
+    "profit_factor": 0.9,
+    "max_dd": 17.37,
+    "sharpe": -0.495
+  },
+  "paperbot_new": {
+    "start": 10000.0,
+    "final": 11868.425254234437,
+    "net_pnl": 1868.4252542344366,
+    "profit_pct": 18.684252542344364,
+    "trades": 52,
+    "win_rate": 57.69,
+    "profit_factor": 1.85,
+    "max_dd": 10.440000000000001,
+    "sharpe": 2.363
+  }
+}

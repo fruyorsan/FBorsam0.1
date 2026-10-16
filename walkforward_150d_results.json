@@ -1,0 +1,221 @@
+{
+  "summaryTable": [
+    {
+      "Metrik": "Toplam İşlem (N)",
+      "Kural 1 (Canlı Kural)": 2908,
+      "Kural 2 (Sabit TP/SL)": 2908,
+      "Kural 3 (Trailing Only)": 2908,
+      "Canlı m0 Girişi (Gecikmeli)": 2883
+    },
+    {
+      "Metrik": "Kazanma Oranı (Win Rate)",
+      "Kural 1 (Canlı Kural)": "70.60%",
+      "Kural 2 (Sabit TP/SL)": "41.09%",
+      "Kural 3 (Trailing Only)": "58.43%",
+      "Canlı m0 Girişi (Gecikmeli)": "69.89%"
+    },
+    {
+      "Metrik": "Toplam Net PnL (USDT)",
+      "Kural 1 (Canlı Kural)": "-366.92 USDT",
+      "Kural 2 (Sabit TP/SL)": "-606.32 USDT",
+      "Kural 3 (Trailing Only)": "-854.62 USDT",
+      "Canlı m0 Girişi (Gecikmeli)": "-419.04 USDT"
+    },
+    {
+      "Metrik": "İşlem Başı Ort. Net PnL",
+      "Kural 1 (Canlı Kural)": "-0.1262 USDT",
+      "Kural 2 (Sabit TP/SL)": "-0.2085 USDT",
+      "Kural 3 (Trailing Only)": "-0.2939 USDT",
+      "Canlı m0 Girişi (Gecikmeli)": "-0.1453 USDT"
+    },
+    {
+      "Metrik": "Kâr Faktörü (PF)",
+      "Kural 1 (Canlı Kural)": "0.79",
+      "Kural 2 (Sabit TP/SL)": "0.83",
+      "Kural 3 (Trailing Only)": "0.65",
+      "Canlı m0 Girişi (Gecikmeli)": "0.76"
+    }
+  ],
+  "monthlyReport": [
+    {
+      "Ay": "2026-05",
+      "İşlem (N)": 347,
+      "Kural 1 WR": "68.0%",
+      "Kural 1 Net PnL": "-65.03$",
+      "Kural 2 WR": "40.1%",
+      "Kural 2 Net PnL": "-80.04$"
+    },
+    {
+      "Ay": "2026-06",
+      "İşlem (N)": 796,
+      "Kural 1 WR": "67.7%",
+      "Kural 1 Net PnL": "-160.33$",
+      "Kural 2 WR": "34.3%",
+      "Kural 2 Net PnL": "-398.28$"
+    },
+    {
+      "Ay": "2026-07",
+      "İşlem (N)": 470,
+      "Kural 1 WR": "71.5%",
+      "Kural 1 Net PnL": "-51.71$",
+      "Kural 2 WR": "40.6%",
+      "Kural 2 Net PnL": "-121.01$"
+    },
+    {
+      "Ay": "2026-08",
+      "İşlem (N)": 460,
+      "Kural 1 WR": "72.4%",
+      "Kural 1 Net PnL": "-29.22$",
+      "Kural 2 WR": "40.7%",
+      "Kural 2 Net PnL": "-86.54$"
+    },
+    {
+      "Ay": "2026-09",
+      "İşlem (N)": 626,
+      "Kural 1 WR": "72.8%",
+      "Kural 1 Net PnL": "-33.35$",
+      "Kural 2 WR": "48.1%",
+      "Kural 2 Net PnL": "81.47$"
+    },
+    {
+      "Ay": "2026-10",
+      "İşlem (N)": 209,
+      "Kural 1 WR": "73.2%",
+      "Kural 1 Net PnL": "-27.28$",
+      "Kural 2 WR": "49.8%",
+      "Kural 2 Net PnL": "-1.93$"
+    }
+  ],
+  "sR1": {
+    "n": 2908,
+    "wins": 2053,
+    "losses": 855,
+    "winRate": 70.59834938101788,
+    "totalPnl": -366.91686100464796,
+    "avgPnl": -0.12617498659031912,
+    "avgRoi": -2.5234997318064134,
+    "wMean": 0.6600000000000046,
+    "lMean": -2.0139144573153818,
+    "pf": 0.7869112434582394
+  },
+  "sR2": {
+    "n": 2908,
+    "wins": 1195,
+    "losses": 1713,
+    "winRate": 41.09353507565337,
+    "totalPnl": -606.3157584505124,
+    "avgPnl": -0.2084992291783055,
+    "avgRoi": -4.169984583565961,
+    "wMean": 2.397646235161972,
+    "lMean": -2.0265633446988667,
+    "pf": 0.825344884680565
+  },
+  "sR3": {
+    "n": 2908,
+    "wins": 1699,
+    "losses": 1209,
+    "winRate": 58.42503438789546,
+    "totalPnl": -854.6166944886468,
+    "avgPnl": -0.29388469549128154,
+    "avgRoi": -5.877693909825683,
+    "wMean": 0.9303556518969601,
+    "lMean": -2.0143018586117707,
+    "pf": 0.6490699825744201
+  },
+  "sM0": {
+    "n": 2883,
+    "wins": 2015,
+    "losses": 868,
+    "winRate": 69.89247311827957,
+    "totalPnl": -419.0407668474297,
+    "avgPnl": -0.1453488612027158,
+    "avgRoi": -2.906977224054338,
+    "wMean": 0.6600000000000035,
+    "lMean": -2.0149087175661706,
+    "pf": 0.7604031109625435
+  },
+  "pairR1_R2": {
+    "observedMeanDiff": -0.08232424258798639,
+    "ciLower": -0.22900360584084944,
+    "ciUpper": 0.0641271264530043
+  },
+  "pairR3_R1": {
+    "observedMeanDiff": -0.16770970890096246,
+    "ciLower": -0.22854748540451233,
+    "ciUpper": -0.09771743234268095
+  },
+  "avgBnHReturnPct": 57.197214681948054,
+  "avgRandomPnl": -0.1211972643989657,
+  "sInR1": {
+    "n": 1744,
+    "wins": 1203,
+    "losses": 541,
+    "winRate": 68.97935779816514,
+    "totalPnl": -292.0651847957886,
+    "avgPnl": -0.16746856926364023,
+    "avgRoi": -3.34937138527287,
+    "wMean": 0.6599999999999828,
+    "lMean": -2.007477236221412,
+    "pf": 0.7310745548301257
+  },
+  "sInR2": {
+    "n": 1744,
+    "wins": 651,
+    "losses": 1093,
+    "winRate": 37.32798165137615,
+    "totalPnl": -646.5350306537181,
+    "avgPnl": -0.3707196276684163,
+    "avgRoi": -7.414392553368399,
+    "wMean": 2.410000000000022,
+    "lMean": -2.026939643782032,
+    "pf": 0.708169229338559
+  },
+  "sInR3": {
+    "n": 1744,
+    "wins": 977,
+    "losses": 767,
+    "winRate": 56.02064220183486,
+    "totalPnl": -664.2610507012736,
+    "avgPnl": -0.3808836299892624,
+    "avgRoi": -7.617672599785323,
+    "wMean": 0.8990505080277972,
+    "lMean": -2.011256058728096,
+    "pf": 0.5693979840097084
+  },
+  "sOutR1": {
+    "n": 1164,
+    "wins": 850,
+    "losses": 314,
+    "winRate": 73.02405498281786,
+    "totalPnl": -74.85167620885163,
+    "avgPnl": -0.06430556375330895,
+    "avgRoi": -1.2861112750661845,
+    "wMean": 0.6599999999999882,
+    "lMean": -2.0250053382447346,
+    "pf": 0.8822812315992518
+  },
+  "sOutR2": {
+    "n": 1164,
+    "wins": 544,
+    "losses": 620,
+    "winRate": 46.735395189003434,
+    "totalPnl": 40.21927220322228,
+    "avgPnl": 0.03455263934984732,
+    "avgRoi": 0.6910527869969432,
+    "wMean": 2.382862593784152,
+    "lMean": -2.0258999658312193,
+    "pf": 1.03202023543623
+  },
+  "sOutR3": {
+    "n": 1164,
+    "wins": 722,
+    "losses": 442,
+    "winRate": 62.02749140893471,
+    "totalPnl": -190.35564378737277,
+    "avgPnl": -0.16353577644963296,
+    "avgRoi": -3.2707155289926546,
+    "wMean": 0.9727173216478905,
+    "lMean": -2.019587217233369,
+    "pf": 0.7867540091004492
+  }
+}

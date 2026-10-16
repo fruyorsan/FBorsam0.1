@@ -113,11 +113,14 @@ export function sanitizeSymbol(raw: string | null | undefined): string | null {
 /**
  * Validates and sanitizes chart interval parameter
  */
-export function sanitizeInterval(raw: string | null | undefined): "1m" | "5m" | "15m" | "1h" | "1d" {
+export type ChartInterval = "1d" | "1w" | "1mo" | "3mo" | "1y" | "all" | "1m" | "5m" | "15m" | "1h"
+
+export function sanitizeInterval(raw: string | null | undefined): ChartInterval {
   if (!raw) return "1d"
   const cleaned = raw.trim().toLowerCase()
-  if (["1m", "5m", "15m", "1h", "1d"].includes(cleaned)) {
-    return cleaned as "1m" | "5m" | "15m" | "1h" | "1d"
+  const valid: ChartInterval[] = ["1d", "1w", "1mo", "3mo", "1y", "all", "1m", "5m", "15m", "1h"]
+  if (valid.includes(cleaned as any)) {
+    return cleaned as ChartInterval
   }
   return "1d"
 }

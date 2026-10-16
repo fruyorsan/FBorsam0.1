@@ -153,7 +153,7 @@ export async function GET(request: NextRequest) {
       fetch(`${BINANCE_BASE}/ticker/24hr?symbol=${cleanSymbol}`, { next: { revalidate: 2 } }),
       fetch(`${BINANCE_BASE}/depth?symbol=${cleanSymbol}&limit=12`, { next: { revalidate: 2 } }),
       fetch(`${BINANCE_BASE}/trades?symbol=${cleanSymbol}&limit=20`, { next: { revalidate: 2 } }),
-      fetch(`${BINANCE_BASE}/klines?symbol=${cleanSymbol}&interval=${interval}&limit=60`, {
+      fetch(`${BINANCE_BASE}/klines?symbol=${cleanSymbol}&interval=${interval}&limit=100`, {
         next: { revalidate: 30 },
       }),
     ])
@@ -188,7 +188,7 @@ export async function GET(request: NextRequest) {
     // Technical Analysis with safe fallback
     let technical = null
     let advice: ReturnType<typeof horizonAdvice> = []
-    if (candles.length >= 30) {
+    if (candles.length >= 15) {
       try {
         technical = analyzeCandles(candles)
         advice = horizonAdvice(candles)

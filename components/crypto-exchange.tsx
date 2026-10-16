@@ -351,7 +351,7 @@ export function CryptoExchange() {
                       )}
                     >
                       {coin.isUp ? "+" : ""}
-                      {coin.change.toFixed(2)}%
+                      {(coin.change ?? 0).toFixed(2)}%
                     </p>
                   </div>
                 </button>
