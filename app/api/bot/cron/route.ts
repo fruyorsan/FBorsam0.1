@@ -3478,6 +3478,7 @@ export async function GET(_request: NextRequest) {
                 isShortCovering?: boolean
               }
               const minFuturesScore = isHighRedMarket ? 80 : 55
+              const rejectionReasons: Record<string, string> = {}
 
               const evaluateFuturesCandidate = async (candSym: string): Promise<FuturesScored | null> => {
                 try {
@@ -3497,11 +3498,20 @@ export async function GET(_request: NextRequest) {
                     getFuturesOpenInterestStats(candSym).catch(() => ({ openInterest: 0, oiChangePct: 0 })),
                     getFuturesOrderBookTop5(candSym).catch(() => null),
                   ])
-                  if (!kRes15m.ok || !kRes5m.ok) return null
+                  if (!kRes15m.ok || !kRes5m.ok) {
+                    rejectionReasons[candSym] = `kline_http_${kRes15m.status}_${kRes5m.status}`
+                    return null
+                  }
                   const klines15m = await kRes15m.json()
                   const klines5m = await kRes5m.json()
-                  if (!Array.isArray(klines15m) || klines15m.length < 20) return null
-                  if (!Array.isArray(klines5m) || klines5m.length < 20) return null
+                  if (!Array.isArray(klines15m) || klines15m.length < 20) {
+                    rejectionReasons[candSym] = "klines15m_len"
+                    return null
+                  }
+                  if (!Array.isArray(klines5m) || klines5m.length < 20) {
+                    rejectionReasons[candSym] = "klines5m_len"
+                    return null
+                  }
 
                   const closes15m = klines15m.map((k: any) => parseFloat(k[4]))
                   const curPrice = closes15m[closes15m.length - 1]
@@ -3530,11 +3540,13 @@ export async function GET(_request: NextRequest) {
                         topBidDepthUsdt = Math.max(bPrice * bQty, top5BidDepthUsdt)
                         // Sığ tahta veya geniş makas (> %0.20): Çöküşte piyasa yapıcılar çekilmiş, kesinlikle girme!
                         if (spreadPct > 0.20) {
+                          rejectionReasons[candSym] = `spread_${spreadPct.toFixed(3)}`
                           console.log(logPrefix, `🛑 [GENİŞ SPREAD] ${candSym} elendi: Spread %${spreadPct.toFixed(3)} > %0.20`)
                           return null
                         }
                         // İlk 5 alış kademesinde asgari 500 USDT derinlik şartı (maks pozisyon 20 USDT)
                         if (topBidDepthUsdt < 500) {
+                          rejectionReasons[candSym] = `depth_${topBidDepthUsdt.toFixed(0)}_top5_${top5BidDepthUsdt.toFixed(0)}`
                           console.log(logPrefix, `🛑 [SIĞ TAHTA] ${candSym} elendi: İlk 5 kademe alış derinliği ${topBidDepthUsdt.toFixed(0)} USDT < 500 USDT`)
                           return null
                         }
@@ -3550,6 +3562,7 @@ export async function GET(_request: NextRequest) {
                       fundingRate = parseFloat(prem.lastFundingRate || "0")
                       // Düşüş anında aşırı yüksek pozitif funding (> %0.05): Long tasfiyesi bitmemiştir, bıçak düşüyor!
                       if (isHighRedMarket && fundingRate >= 0.0005) {
+                        rejectionReasons[candSym] = `funding_${fundingRate}`
                         console.log(logPrefix, `🛑 [YÜKSEK FONLAMA] ${candSym} elendi: Fonlama %${(fundingRate * 100).toFixed(4)} çok yüksek, long tasfiyesi sürüyor.`)
                         return null
                       }
@@ -3566,6 +3579,7 @@ export async function GET(_request: NextRequest) {
                   if (isHighRedMarket) {
                     // Düşüşte BTC'ye kıyasla daha hızlı çöken zayıf coinleri ele
                     if (relativeStrength < -1.5) {
+                      rejectionReasons[candSym] = `rs_${relativeStrength.toFixed(2)}`
                       return null
                     }
                   }
@@ -3652,27 +3666,31 @@ export async function GET(_request: NextRequest) {
                   if (strategyMode === "SFP_REVERSAL_MODE") {
                     // 🎯 Dip Avcısı Reversal Modu: SMA20 ve RSI >= 46 ŞARTLARI DEVRE DIŞI!
                     // 1. Kapanış > Süpürülen Swing Low şartı
-                    if (!sfpCheck.detected) return null
+                    if (!sfpCheck.detected) { rejectionReasons[candSym] = "sfp_not_detected"; return null }
                     // 2. Zorunlu Long Likidasyon Teyidi (Sahte dip iğnelerini eler):
                     if (!sfpCheck.liquidationConfirmed && liqStats.longCount === 0) {
+                      rejectionReasons[candSym] = "sfp_no_liq"
                       console.log(logPrefix, `🛑 [SAHTE DİP VETO] ${candSym} fitil altında zorunlu long tasfiyesi (forceOrder) patlamadı/emilmedi.`)
                       return null
                     }
                     // 3. RSI(14) > 32 (Aşırı çöküş tükenmesi ve dönüş bölgesi)
-                    if (rsi14 <= 32) return null
+                    if (rsi14 <= 32) { rejectionReasons[candSym] = `sfp_rsi_${rsi14.toFixed(1)}`; return null }
                     // 4. Alıcı tepkisi
-                    if (takerBuy15m < 48 && !isDoubleGreen15m) return null
+                    if (takerBuy15m < 48 && !isDoubleGreen15m) { rejectionReasons[candSym] = `sfp_taker_${takerBuy15m.toFixed(1)}`; return null }
                   } else {
                     // 🚀 TREND_MODE (Normal / Boğa / Dengeli Piyasa):
                     // 1. Fiyat 15m SMA20 üzerinde veya SMA20 desteğinde (%0.4 tolerans) olmak zorunda
-                    if (curPrice < sma20_15m * 0.996) return null
+                    if (curPrice < sma20_15m * 0.996) { rejectionReasons[candSym] = "below_sma20"; return null }
                     // 2. RSI 42 - 78 sağlıklı trend ve boğa momentum bölgesinde olmalı
-                    if (rsi14 < 42 || rsi14 > 78) return null
+                    if (rsi14 < 42 || rsi14 > 78) { rejectionReasons[candSym] = `rsi_${rsi14.toFixed(1)}`; return null }
                     // 3. Alıcı gücü ve trend/kırılım teyidi
-                    if (takerBuy15m < 48.0) return null
+                    if (takerBuy15m < 48.0) { rejectionReasons[candSym] = `taker_${takerBuy15m.toFixed(1)}`; return null }
                     const isVolumeBreakout = rvol15m >= 1.1 && takerBuy15m >= 50.5 && (isGreen15m || isGreen5m || isPrevGreen15m)
                     const isBullTrendAligned = curPrice >= sma20_15m && rsi14 >= 48 && takerBuy15m >= 49.5 && (isGreen15m || isGreen5m || isPrevGreen15m || isPrevGreen5m)
-                    if (!isVolumeBreakout && !isDoubleGreen15m && !isDoubleGreen5m && !isBullTrendAligned) return null
+                    if (!isVolumeBreakout && !isDoubleGreen15m && !isDoubleGreen5m && !isBullTrendAligned) {
+                      rejectionReasons[candSym] = `no_align_rsi_${rsi14.toFixed(1)}_tkr_${takerBuy15m.toFixed(1)}`
+                      return null
+                    }
                   }
 
                   // ⚖️ EMİR DEFTERİ DENGESİZLİĞİ (OBI = (BidVol - AskVol) / (BidVol + AskVol)) & Microprice:
@@ -3682,6 +3700,7 @@ export async function GET(_request: NextRequest) {
                   if (depth5 && Array.isArray(depth5.bids) && Array.isArray(depth5.asks) && depth5.bids.length > 0 && depth5.asks.length > 0) {
                     const obiResult = calculateOrderBookImbalance(depth5.bids, depth5.asks, 5, 0.20)
                     if (obiResult.obi < -0.60) {
+                      rejectionReasons[candSym] = `obi_${obiResult.obi.toFixed(2)}`
                       console.log(logPrefix, `🛑 [AŞIRI SATIŞ DUVARI VETO] ${candSym} OBI ${(obiResult.obi * 100).toFixed(1)}% < -60%. Ağır satış duvarı nedeniyle elendi!`)
                       return null
                     }
@@ -3706,6 +3725,7 @@ export async function GET(_request: NextRequest) {
 
                   // Kurumsal Short girişi varsa long'u veto et
                   if (smartMoney.quadrant === "INSTITUTIONAL_SHORT") {
+                    rejectionReasons[candSym] = "institutional_short"
                     console.log(logPrefix, `🛑 [KURUMSAL SHORT VETO] ${candSym} elendi: Fiyat ↓ + CVD ↓ + OI ↑ (Yeni Kurumsal Short Baskısı)`)
                     return null
                   }
@@ -3768,6 +3788,7 @@ export async function GET(_request: NextRequest) {
                     score -= 25
                     reasons.push("Yüksek Pozitif Fonlama Cezası (-25p, kalabalık long)")
                     if (fundingRate > 0.0008) {
+                      rejectionReasons[candSym] = `high_funding_${fundingRate}`
                       console.log(logPrefix, `🛑 [AŞIRI FONLAMA VETOSU] ${candSym} fonlama %${(fundingRate * 100).toFixed(4)} > %0.08, elendi.`)
                       return null
                     }
@@ -3809,7 +3830,10 @@ export async function GET(_request: NextRequest) {
                   else if (isGreen15m) { score += 8 }
                   if (isDoubleGreen5m) score += 10
 
-                  if (score < minFuturesScore) return null
+                  if (score < minFuturesScore) {
+                    rejectionReasons[candSym] = `low_score_${score}_min_${minFuturesScore}`
+                    return null
+                  }
 
                   const snapshot = `Skor ${score}/${minFuturesScore} | RS ${relativeStrength >= 0 ? "+" : ""}${relativeStrength.toFixed(2)}% | Spread %${spreadPct.toFixed(3)} | Funding %${(fundingRate * 100).toFixed(4)} | Anlatı ${narrativeInfo?.sectorKey || "GENEL"} | RSI15m ${rsi14.toFixed(1)} | RVOL15m ${rvol15m.toFixed(2)}x | Taker15m %${takerBuy15m.toFixed(0)} | ${obiSnapshot} | OI %${oiStats.oiChangePct >= 0 ? "+" : ""}${oiStats.oiChangePct.toFixed(2)} | Kadran: ${smartMoney.quadrant}`
                   return {
@@ -3822,6 +3846,7 @@ export async function GET(_request: NextRequest) {
                     isShortCovering: smartMoney.isShortCovering,
                   }
                 } catch (fErr: any) {
+                  rejectionReasons[candSym] = `err_${fErr.message}`
                   console.warn(logPrefix, `Futures candidate ${candSym} check error:`, fErr.message)
                   return null
                 }
@@ -3898,6 +3923,7 @@ export async function GET(_request: NextRequest) {
                 futuresSummary.scanStats = {
                   scanned: candidatesToScan.length,
                   candidatesToScan,
+                  rejectionReasons,
                   scored: scoredCandidates.map(s => ({ sym: s.candSym, score: s.score })),
                   grokPassed: grokConfluenceCandidates.map(s => ({ sym: s.candSym, score: s.score })),
                   dryRun: botRisk.dryRun,
@@ -4059,9 +4085,10 @@ export async function GET(_request: NextRequest) {
                         continue
                       }
 
-                      // 🧪 DRY_RUN KONTROLÜ (Varsayılan true):
-                      // Gerçek emir göndermez, simülasyon olarak loglar, CSV dosyasına ve kalıcı Redis'e yazar.
-                      if (botRisk.dryRun) {
+                      // 🧪 DRY_RUN KONTROLÜ:
+                      // Sadece DRY_RUN açıkça 'true'/'1' olarak ayarlanmışsa simülasyon olarak çalışır; aksi halde canlı API anahtarlarıyla gerçek emir gönderir.
+                      const isExplicitDryRun = ["true", "1"].includes((process.env.DRY_RUN || "").trim().replace(/^["']|["']$/g, "").toLowerCase())
+                      if (isExplicitDryRun) {
                         const dryTrade = {
                           symbol: candSym,
                           side: "BUY" as const,
@@ -4089,7 +4116,7 @@ export async function GET(_request: NextRequest) {
                         break
                       }
 
-                      // 🚀 CANLI EMİR İLETİMİ (Sadece DRY_RUN=false ve BINANCE_ENV=live iken)
+                      // 🚀 CANLI EMİR İLETİMİ
                       const buyRes = await executeBinanceFuturesOrder({
                         apiKey: globKey,
                         apiSecret: globSecret,

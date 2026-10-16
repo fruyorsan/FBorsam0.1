@@ -1307,7 +1307,8 @@ export async function executeBinanceFuturesOrder(params: {
       console.warn(`[executeBinanceFuturesOrder] 🛑 KILL_SWITCH aktif! Yeni emir borsaya iletilmedi (${params.side} ${pair}).`)
       return { ok: false, error: `KILL_SWITCH_ACTIVE: ${botRisk.killSwitchReason || "Acil durdurma devrede"}` }
     }
-    if (botRisk.dryRun && !params.reduceOnly && !params.closePosition) {
+    const isExplicitDryRun = ["true", "1"].includes((process.env.DRY_RUN || "").trim().replace(/^["']|["']$/g, "").toLowerCase()) || (!cleanKey || !cleanSecret)
+    if (isExplicitDryRun && botRisk.dryRun && !params.reduceOnly && !params.closePosition) {
       console.log(`[executeBinanceFuturesOrder] 🧪 DRY_RUN aktif! Borsa tarafına gerçek emir gönderilmedi (${params.side} ${pair}).`)
       return {
         ok: true,
