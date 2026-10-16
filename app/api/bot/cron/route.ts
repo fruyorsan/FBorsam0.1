@@ -2606,32 +2606,39 @@ export async function GET(_request: NextRequest) {
               isTp1Taken: alreadyTp1,
             })
 
-            // 🔒 BORSADAKİ GERÇEK STOP_MARKET EMRİNİ BAŞABAŞA (+%0.25 KÂR) OTOMATİK TAŞIMA:
-            // Fiyat +%1.20 (10x'te +%12 ROI) üzerine çıktıysa ve borsadaki mevcut stop hala giriş fiyatının altındaysa,
-            // borsadaki gerçek STOP_MARKET emrini atomik olarak girişin +%0.25 üstüne (komisyon üstü net kâr) taşır!
-            if ((rawPriceDiffPct >= 1.20 || peakPriceGainPct >= 1.20) && markP > entryP * 1.005) {
+            // 🔒 BORSADAKİ GERÇEK STOP_MARKET EMRİNİ 2 KADEMELİ OTOMATİK KÂRA TAŞIMA:
+            // Kademe 1: Fiyat +%1.20 (10x'te +%12 ROI) -> Stop = Giriş + %0.25 (Başabaş + Komisyon Kilidi)
+            // Kademe 2: Fiyat +%2.20 (10x'te +%22 ROI) -> Stop = Giriş + %1.10 (+%11 Net ROI Garanti Kâr Kilidi)
+            const effectiveMaxGainPct = Math.max(rawPriceDiffPct, peakPriceGainPct)
+            if (effectiveMaxGainPct >= 1.20 && markP > entryP * 1.005) {
               try {
+                const isStage2ProfitLock = effectiveMaxGainPct >= 2.20 && markP > entryP * 1.014
+                const targetLockMultiplier = isStage2ProfitLock ? 1.0110 : 1.0025
+                const minRequiredCurrentStop = isStage2ProfitLock ? entryP * 1.0095 : entryP
+
                 const openOrders = await getFuturesOpenOrders(globKey, globSecret, sym)
                 const curStopOrder = openOrders.find((o) => o.type === "STOP_MARKET" || o.type === "STOP")
                 const currentStopTrigger = curStopOrder?.stopPrice || 0
-                if (currentStopTrigger > 0 && currentStopTrigger < entryP) {
+                if (currentStopTrigger > 0 && currentStopTrigger < minRequiredCurrentStop) {
                   const symFilters = await getFuturesSymbolFilters(sym)
                   const symTick = symFilters?.tickSize || 0.0001
-                  const safeBeTrigger = parseFloat(formatWithTickSize(Math.max(entryP * 1.0025, monoStop.newStopPrice), symTick))
-                  if (safeBeTrigger < markP * 0.998) {
+                  const desiredStopPrice = Math.max(entryP * targetLockMultiplier, monoStop.newStopPrice)
+                  const safeLockTrigger = parseFloat(formatWithTickSize(desiredStopPrice, symTick))
+                  if (safeLockTrigger > currentStopTrigger && safeLockTrigger < markP * 0.998) {
                     const upgStopRes = await executeBinanceFuturesOrder({
                       apiKey: globKey,
                       apiSecret: globSecret,
                       symbol: sym,
                       side: "SELL",
                       type: "STOP_MARKET",
-                      stopPrice: safeBeTrigger,
+                      stopPrice: safeLockTrigger,
                       closePosition: true,
                       workingType: "MARK_PRICE",
                     }).catch(() => ({ ok: false, orderId: undefined }))
                     if (upgStopRes.ok && upgStopRes.orderId) {
                       await cancelFuturesAllOpenOrders(globKey, globSecret, sym, [upgStopRes.orderId]).catch(() => {})
-                      console.log(logPrefix, `🔒 [BORSA STOP BAŞABAŞA ÇEKİLDİ] ${sym} gerçek STOP_MARKET emri ${currentStopTrigger}$ -> ${safeBeTrigger}$ (+%0.25 kâr kilidi) seviyesine yükseltildi!`)
+                      const lockLabel = isStage2ProfitLock ? "KADEME-2 +%1.10 (+%11 ROI) GARANTİ KÂR KİLİDİ" : "KADEME-1 +%0.25 BAŞABAŞ KİLİDİ"
+                      console.log(logPrefix, `🔒 [BORSA STOP YÜKSELTİLDİ - ${lockLabel}] ${sym} gerçek STOP_MARKET emri ${currentStopTrigger}$ -> ${safeLockTrigger}$ seviyesine yükseltildi!`)
                     }
                   }
                 }
