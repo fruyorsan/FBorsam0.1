@@ -2494,6 +2494,7 @@ export async function GET(_request: NextRequest) {
               baseTp2Pct = customTp * 1.60
             }
             let isFuturesExhausted = false
+            let futuresRiskReasons: string[] = []
             let klines15mList: any[] = []
             // Futures Risk Teyit Analizi:
 
@@ -2541,7 +2542,7 @@ export async function GET(_request: NextRequest) {
                   const volGrowth = (lastVol / prevVol) - 1 // >0 artış, <0 azalış
 
                   // Futures için Çoklu Gösterge Risk Teyit Analizi:
-                  const futuresRiskReasons: string[] = []
+                  futuresRiskReasons = []
                   if (rsi14 >= 72) futuresRiskReasons.push(`RSI Şişmesi (${rsi14.toFixed(1)})`)
                   if (takerBuyPct < 40) futuresRiskReasons.push(`Taker Satıcı Baskısı (%${(100 - takerBuyPct).toFixed(0)})`)
                   if (volGrowth < -0.35) futuresRiskReasons.push("Hacim Sönmesi")
@@ -2596,6 +2597,14 @@ export async function GET(_request: NextRequest) {
 
             const alreadyTp1 = await isFuturesTp1Taken(sym)
 
+            // Borsadaki mevcut açık STOP_MARKET tetik fiyatını al
+            let currentExchangeStopPrice = 0
+            try {
+              const openOrders = await getFuturesOpenOrders(globKey, globSecret, sym)
+              const curStopOrder = openOrders.find((o) => o.type === "STOP_MARKET" || o.type === "STOP")
+              currentExchangeStopPrice = curStopOrder?.stopPrice || 0
+            } catch {}
+
             // 🛡️ MONOTONİK R-BAZLI STOP SEVİYESİ HESAPLAMASI:
             const monoStop = calculateMonotonicStopTarget({
               entryPrice: entryP,
@@ -2604,27 +2613,30 @@ export async function GET(_request: NextRequest) {
               stopLossDistancePct: dynamicStopDistPct,
               atrPct: posAtrPct,
               isTp1Taken: alreadyTp1,
+              currentStopPrice: currentExchangeStopPrice,
             })
 
-            // 🔒 BORSADAKİ GERÇEK STOP_MARKET EMRİNİ 2 KADEMELİ OTOMATİK KÂRA TAŞIMA:
+            // 🔒 BORSADAKİ GERÇEK STOP_MARKET EMRİNİ DİNAMİK/KADEMELİ OTOMATİK KÂRA TAŞIMA:
             // Kademe 1: Fiyat +%1.20 (10x'te +%12 ROI) -> Stop = Giriş + %0.25 (Başabaş + Komisyon Kilidi)
             // Kademe 2: Fiyat +%2.20 (10x'te +%22 ROI) -> Stop = Giriş + %1.10 (+%11 Net ROI Garanti Kâr Kilidi)
+            // Sürekli Takip (Trailing): monoStop fiyatı mevcut borsa stopundan > %0.35 daha yüksekse borsadaki emri yukarı sür!
             const effectiveMaxGainPct = Math.max(rawPriceDiffPct, peakPriceGainPct)
             if (effectiveMaxGainPct >= 1.20 && markP > entryP * 1.005) {
               try {
                 const isStage2ProfitLock = effectiveMaxGainPct >= 2.20 && markP > entryP * 1.014
                 const targetLockMultiplier = isStage2ProfitLock ? 1.0110 : 1.0025
-                const minRequiredCurrentStop = isStage2ProfitLock ? entryP * 1.0095 : entryP
+                const minRequiredStageStop = isStage2ProfitLock ? entryP * 1.0095 : entryP
+                const candidateTargetStop = Math.max(entryP * targetLockMultiplier, monoStop.newStopPrice)
 
-                const openOrders = await getFuturesOpenOrders(globKey, globSecret, sym)
-                const curStopOrder = openOrders.find((o) => o.type === "STOP_MARKET" || o.type === "STOP")
-                const currentStopTrigger = curStopOrder?.stopPrice || 0
-                if (currentStopTrigger > 0 && currentStopTrigger < minRequiredCurrentStop) {
+                const shouldUpgradeStop =
+                  (currentExchangeStopPrice > 0 && currentExchangeStopPrice < minRequiredStageStop) ||
+                  (candidateTargetStop > currentExchangeStopPrice * 1.0035 && candidateTargetStop < markP * 0.998)
+
+                if (shouldUpgradeStop) {
                   const symFilters = await getFuturesSymbolFilters(sym)
                   const symTick = symFilters?.tickSize || 0.0001
-                  const desiredStopPrice = Math.max(entryP * targetLockMultiplier, monoStop.newStopPrice)
-                  const safeLockTrigger = parseFloat(formatWithTickSize(desiredStopPrice, symTick))
-                  if (safeLockTrigger > currentStopTrigger && safeLockTrigger < markP * 0.998) {
+                  const safeLockTrigger = parseFloat(formatWithTickSize(candidateTargetStop, symTick))
+                  if (safeLockTrigger > currentExchangeStopPrice && safeLockTrigger < markP * 0.998) {
                     const upgStopRes = await executeBinanceFuturesOrder({
                       apiKey: globKey,
                       apiSecret: globSecret,
@@ -2637,8 +2649,13 @@ export async function GET(_request: NextRequest) {
                     }).catch(() => ({ ok: false, orderId: undefined }))
                     if (upgStopRes.ok && upgStopRes.orderId) {
                       await cancelFuturesAllOpenOrders(globKey, globSecret, sym, [upgStopRes.orderId]).catch(() => {})
-                      const lockLabel = isStage2ProfitLock ? "KADEME-2 +%1.10 (+%11 ROI) GARANTİ KÂR KİLİDİ" : "KADEME-1 +%0.25 BAŞABAŞ KİLİDİ"
-                      console.log(logPrefix, `🔒 [BORSA STOP YÜKSELTİLDİ - ${lockLabel}] ${sym} gerçek STOP_MARKET emri ${currentStopTrigger}$ -> ${safeLockTrigger}$ seviyesine yükseltildi!`)
+                      const lockLabel = safeLockTrigger >= entryP * 1.011
+                        ? "KADEME-2 +%1.10 (+%11 ROI) GARANTİ KÂR KİLİDİ"
+                        : safeLockTrigger >= entryP * 1.0025
+                        ? "KADEME-1 +%0.25 BAŞABAŞ KİLİDİ"
+                        : "ATR DİNAMİK TAKİPÇİ STOP"
+                      console.log(logPrefix, `🔒 [BORSA STOP YÜKSELTİLDİ - ${lockLabel}] ${sym} gerçek STOP_MARKET emri ${currentExchangeStopPrice}$ -> ${safeLockTrigger}$ seviyesine yükseltildi!`)
+                      currentExchangeStopPrice = safeLockTrigger
                     }
                   }
                 }
@@ -2789,6 +2806,83 @@ export async function GET(_request: NextRequest) {
 
             // --- MEVCUT ÇIKIŞ KURALLARI (useNewExitRules === false) ---
 
+            // A.0) 🚨 AKILLI YORULMA KÂR KİLİDİ (EXHAUSTION TP):
+            // Pozisyon en az +%1.40 fiyatta (+%14 ROI) kârdayken, RSI > 78, Taker alımları çökmüş ve üst fitil satışı başlamışsa,
+            // kârın buharlaşmasını beklemeden anında kârı kasaya kilitleyip pozisyonu kapatır:
+            if (rawPriceDiffPct >= 1.40 && isFuturesExhausted) {
+              const filters = await getFuturesSymbolFilters(sym)
+              const stepSize = filters?.stepSize || 0.001
+              const fullAmt = parseFloat(formatWithStepSize(fPos.positionAmt, stepSize, filters?.basePrecision || 3))
+              const closeClientOrderId = `bot-exhaust-${cleanSym}-${Date.now()}`
+              await markFuturesClosing(cleanSym, { clientOrderId: closeClientOrderId, reason: "TP" })
+
+              const closeRes = await executeBinanceFuturesOrder({
+                apiKey: globKey,
+                apiSecret: globSecret,
+                symbol: sym,
+                side: "SELL",
+                type: "MARKET",
+                quantity: fullAmt,
+                reduceOnly: true,
+                newClientOrderId: closeClientOrderId,
+              })
+              if (closeRes.ok) {
+                closedFuturesSymbols.add(sym)
+                await cancelFuturesAllOpenOrders(globKey, globSecret, sym).catch(() => {})
+                await clearFuturesPositionMeta(sym)
+                await setSymbolCooldown(sym, "TP", 900).catch(() => {})
+                const pnlUsdt = fullAmt * (markP - entryP)
+                const usdtRate = await getCronUsdtTryRate()
+                const netTry = pnlUsdt * usdtRate
+                const reasonsText = futuresRiskReasons.join("+") || "Zirve Yorulması"
+                const logMsg = `⚡ 🌐 [YORULMA KÂR KİLİDİ] ${sym} ${fPos.leverage}x Kaldıraç: +%${leveragedRoiPct.toFixed(2)} ROI Net Kârla Kapatıldı! Sinyal: ${reasonsText}.`
+                executedActions.push(`FUTURES_EXHAUSTION_TP: ${sym} (+%${leveragedRoiPct.toFixed(2)})`)
+                notifyFuturesTradeExit({
+                  symbol: sym,
+                  leverage: fPos.leverage,
+                  pnlUsdt,
+                  leveragedRoiPct,
+                  exitPrice: markP,
+                  entryPrice: entryP,
+                  reason: `Akıllı Yorulma Kâr Kilidi (${reasonsText})`,
+                }).catch(() => {})
+                await appendServerLog({
+                  id: `log-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+                  time: new Date().toLocaleTimeString("tr-TR"),
+                  type: "SELL",
+                  symbol: sym,
+                  message: logMsg,
+                })
+                const histItem: any = {
+                  id: `futures-exhaust-${sym}-${Date.now()}`,
+                  symbol: cleanSym,
+                  name: `${cleanSym} (${fPos.leverage}x Vadeli - Yorulma TP)`,
+                  side: "BUY",
+                  entryPrice: entryP,
+                  currentPrice: markP,
+                  closePrice: markP,
+                  amount: fullAmt,
+                  totalTry: fullAmt * entryP * usdtRate,
+                  pnl: pnlUsdt,
+                  netPnlTry: netTry,
+                  pnlPercent: leveragedRoiPct,
+                  openedAt: new Date(entryTime).toLocaleTimeString("tr-TR"),
+                  openedTimestamp: entryTime,
+                  status: "CLOSED",
+                  closeReason: `Akıllı Yorulma Kâr Kilidi (${reasonsText})`,
+                  closedAt: new Date().toISOString(),
+                  closedTimestamp: Date.now(),
+                  triggerType: "TP",
+                  orderType: "MARKET",
+                  isFutures: true,
+                  leverage: fPos.leverage,
+                  exchange: "BINANCE_GLOBAL_FUTURES",
+                }
+                await appendServerHistory(histItem).catch(() => {})
+                continue
+              }
+            }
+
             // A) 🎯 HEDEF TP1 (COİNE GÖRE %4, %5, %6 HEDEF SATIŞI):
             // Ham fiyatta kâr >= targetTp1Pct (%4, %5, %6) olduğunda tetiklenir!
             // %2'yi geçince stop-loss zaten +%2.0'ye çekildiği için erken cüce satış yapılmaz; tam hedefe koşulur.
@@ -2806,7 +2900,11 @@ export async function GET(_request: NextRequest) {
               const minQty = filters?.minQty || 0.001
               const minNotional = filters?.minNotional || 5
 
-              const canSplit = tp1Amt >= minQty && (tp1Amt * markP) >= minNotional && remainingAmt >= minQty
+              const canSplit =
+                tp1Amt >= minQty &&
+                tp1Amt * markP >= minNotional &&
+                remainingAmt >= minQty &&
+                remainingAmt * markP >= minNotional * 1.05
 
               if (canSplit) {
                 const closeRes = await executeBinanceFuturesOrder({
@@ -3648,12 +3746,24 @@ export async function GET(_request: NextRequest) {
                     } catch {}
                   }
 
-                  // 2) Türev Verileriyle Likidasyon Temizliği (Funding Rate / Fonlama Kontrolü)
+                  // 2) Türev Verileriyle Likidasyon Temizliği (Funding Rate / Fonlama Kontrolü & Zaman Kalkanı)
                   let fundingRate = 0
                   if (premRes.ok) {
                     try {
                       const prem = await premRes.json()
                       fundingRate = parseFloat(prem.lastFundingRate || "0")
+                      const nextFundingTime = Number(prem.nextFundingTime) || 0
+                      const msToFunding = nextFundingTime - Date.now()
+
+                      // Fonlama Kesintisine Son 15 Dakika Kalkanı:
+                      // Eğer 15 dakika içinde 8 saatlik fonlama kesilecekse ve fonlama pozitifse (> +%0.02),
+                      // hem fonlama komisyonu ödememek hem de saat başı "funding dump" iğnesine yakalanmamak için alımı ertele:
+                      if (msToFunding > 0 && msToFunding <= 15 * 60 * 1000 && fundingRate > 0.0002) {
+                        rejectionReasons[candSym] = `funding_settle_${Math.round(msToFunding / 60000)}m`
+                        console.log(logPrefix, `🛑 [FONLAMA SAATİ KALKANI] ${candSym} elendi: Fonlama kesintisine ${Math.round(msToFunding / 60000)} dk kaldı ve oran %${(fundingRate * 100).toFixed(4)} > %0.02. Fonlama sonrası tekrar değerlendirilecek.`)
+                        return null
+                      }
+
                       // Düşüş anında aşırı yüksek pozitif funding (> %0.05): Long tasfiyesi bitmemiştir, bıçak düşüyor!
                       if (isHighRedMarket && fundingRate >= 0.0005) {
                         rejectionReasons[candSym] = `funding_${fundingRate}`
