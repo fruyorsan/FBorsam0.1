@@ -160,13 +160,19 @@ const publicDataCache = new Map<string, PublicCacheItem>()
 
 const publicFetch = async (url: string, init: RequestInit = {}, customTtlMs?: number): Promise<Response> => {
   const now = Date.now()
+  const isBinanceFutures = url.includes("fapi.binance.com")
+
   // 1. L1 RAM Kontrolü (Aynı sunucu örneğinde 0ms)
   const cached = publicDataCache.get(url)
   if (cached && now < cached.expiresAt) {
-    return new Response(cached.body, {
-      status: cached.status,
-      headers: cached.headers,
-    })
+    // Bozuk/restricted önbellek koruması (örn. code:-1121 veya msg:Service unavailable)
+    if (!cached.body.includes('"Service unavailable') && !cached.body.includes('"restricted location')) {
+      return new Response(cached.body, {
+        status: cached.status,
+        headers: cached.headers,
+      })
+    }
+    publicDataCache.delete(url)
   }
 
   const ttl = customTtlMs || (url.includes("ticker/24hr") ? 180000 : 45000)
@@ -175,39 +181,50 @@ const publicFetch = async (url: string, init: RequestInit = {}, customTtlMs?: nu
   // 2. L2 Redis Kontrolü (Serverless Cold Start Kalkanı)
   try {
     const l2Text = await getL2PublicCache(urlHash)
-    if (l2Text) {
-      const headersObj = { "content-type": "application/json" }
-      publicDataCache.set(url, { status: 200, headers: headersObj, body: l2Text, expiresAt: now + ttl })
-      return new Response(l2Text, { status: 200, headers: headersObj })
+    if (l2Text && !l2Text.includes('"Service unavailable') && !l2Text.includes('"restricted location')) {
+      // Kline uç noktaları mutlaka JSON dizi [...] dönmelidir
+      const isValidShape = url.includes("/klines") ? l2Text.trim().startsWith("[") : true
+      if (isValidShape) {
+        const headersObj = { "content-type": "application/json" }
+        publicDataCache.set(url, { status: 200, headers: headersObj, body: l2Text, expiresAt: now + ttl })
+        return new Response(l2Text, { status: 200, headers: headersObj })
+      }
     }
   } catch {}
 
-  // 3. Önce doğrudan (0 proxy maliyeti) dene
+  // 3. fapi.binance.com isteklerinde DOĞRUDAN PROXY kullan (Vercel ABD/Avrupa IP'lerinde doğrudan fetch restricted/bozuk JSON döndürebilir!)
+  if (isBinanceFutures) {
+    const proxyRes = await futuresProxyFetch(url, { ...init, signal: AbortSignal.timeout(6000) })
+    if (proxyRes.ok) {
+      try {
+        const text = await proxyRes.text()
+        const isValidShape = url.includes("/klines") ? text.trim().startsWith("[") : !text.includes('"restricted location')
+        if (isValidShape) {
+          const headersObj: Record<string, string> = { "content-type": "application/json" }
+          publicDataCache.set(url, { status: proxyRes.status, headers: headersObj, body: text, expiresAt: now + ttl })
+          setL2PublicCache(urlHash, text, Math.ceil(ttl / 1000)).catch(() => {})
+          return new Response(text, { status: proxyRes.status, headers: headersObj })
+        }
+      } catch {}
+    }
+  }
+
+  // 4. Diğer URL'ler veya yedek bağlantı
   try {
-    const res = await fetch(url, { ...init, cache: "no-store", signal: AbortSignal.timeout(3000) })
+    const res = await fetch(url, { ...init, cache: "no-store", signal: AbortSignal.timeout(3500) })
     if (res.ok) {
       const text = await res.text()
-      const headersObj: Record<string, string> = {}
-      res.headers.forEach((v, k) => { headersObj[k] = v })
-      publicDataCache.set(url, { status: res.status, headers: headersObj, body: text, expiresAt: now + ttl })
-      setL2PublicCache(urlHash, text, Math.ceil(ttl / 1000)).catch(() => {})
-      return new Response(text, { status: res.status, headers: headersObj })
+      const isValidShape = url.includes("/klines") ? text.trim().startsWith("[") : !text.includes('"restricted location')
+      if (isValidShape) {
+        const headersObj: Record<string, string> = { "content-type": "application/json" }
+        publicDataCache.set(url, { status: res.status, headers: headersObj, body: text, expiresAt: now + ttl })
+        setL2PublicCache(urlHash, text, Math.ceil(ttl / 1000)).catch(() => {})
+        return new Response(text, { status: res.status, headers: headersObj })
+      }
     }
   } catch {}
 
-  // 4. Doğrudan bağlantı hata verirse proxy üzerinden çek ve hem RAM'e hem L2 Redis'e kaydet
-  const proxyRes = await futuresProxyFetch(url, { ...init, signal: AbortSignal.timeout(6000) })
-  if (proxyRes.ok) {
-    try {
-      const text = await proxyRes.text()
-      const headersObj: Record<string, string> = {}
-      proxyRes.headers.forEach((v, k) => { headersObj[k] = v })
-      publicDataCache.set(url, { status: proxyRes.status, headers: headersObj, body: text, expiresAt: now + ttl })
-      setL2PublicCache(urlHash, text, Math.ceil(ttl / 1000)).catch(() => {})
-      return new Response(text, { status: proxyRes.status, headers: headersObj })
-    } catch {}
-  }
-  return proxyRes
+  return futuresProxyFetch(url, { ...init, signal: AbortSignal.timeout(6000) })
 }
 
 
