@@ -21,7 +21,7 @@ import {
   getPendingLimitOrders,
 } from "@/lib/bot/server-state"
 import { getClientIp, checkRateLimit, rateLimitResponse } from "@/lib/security"
-import { getSpotAccountAssets, getFuturesAccountBalance, getFuturesPositions, getFuturesRecentIncome, futuresProxyFetch } from "@/lib/binance-helpers"
+import { getSpotAccountAssets, getFuturesAccountBalance, getFuturesPositions, getFuturesRecentIncome, getFuturesUserTrades, futuresProxyFetch } from "@/lib/binance-helpers"
 
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
@@ -188,7 +188,7 @@ export async function GET(request: NextRequest) {
           error: futuresAcc.error,
         }
 
-        // 📜 Otomatik Vadeli İşlem Geçmişi Senkronizasyonu (Binance Global'de kapanan her işlemi anında geçmişe ekle)
+        // 📜 Otomatik Vadeli İşlem Geçmişi Senkronizasyonu (Binance Global'de kapanan her işlemi doğrulanmış verilerle geçmişe ekle)
         if (Array.isArray(recentIncomes) && recentIncomes.length > 0) {
           const currentHist = Array.isArray(state.history) ? [...state.history] : []
           const activeFuturesSymbols = new Set(
@@ -196,7 +196,7 @@ export async function GET(request: NextRequest) {
           )
 
           for (const inc of recentIncomes) {
-            if (!inc.symbol?.endsWith("USDT") || Math.abs(inc.income) < 0.00001) continue
+            if (!inc.symbol?.endsWith("USDT") || Math.abs(inc.income) < 0.00001 || (inc.incomeType && inc.incomeType !== "REALIZED_PNL")) continue
             const cSym = inc.symbol.replace(/USDT$/i, "").toUpperCase()
             const incTime = Number(inc.time) || Date.now()
 
@@ -209,39 +209,78 @@ export async function GET(request: NextRequest) {
             )
 
             if (!isAlreadyRecorded && !activeFuturesSymbols.has(cSym)) {
-              const usdtRate = cachedUsdtTry?.rate || 49.14
-              const netTry = inc.income * usdtRate
-              const isProfit = inc.income >= 0
-              const newClosedPos: any = {
-                id: `futures-income-${inc.tranId || incTime}`,
-                symbol: cSym,
-                name: `${cSym} (5x Vadeli)`,
-                side: "BUY",
-                entryPrice: 0,
-                currentPrice: 0,
-                closePrice: 0,
-                amount: 0,
-                totalTry: 0,
-                pnl: inc.income,
-                netPnlTry: netTry,
-                pnlPercent: isProfit ? 5.0 : -5.0,
-                openedAt: new Date(incTime - 3600000).toLocaleTimeString("tr-TR"),
-                openedTimestamp: incTime - 3600000,
-                status: "CLOSED",
-                closeReason: isProfit ? "Binance Global Kâr Satışı (Futures)" : "Binance Global Stop Loss (Futures)",
-                closedAt: new Date(incTime).toISOString(),
-                closedTimestamp: incTime,
-                triggerType: "MANUAL",
-                orderType: "MARKET",
-                isFutures: true,
-                leverage: 5,
-                exchange: "BINANCE_GLOBAL_FUTURES",
+              let verifiedEntryPrice = 0
+              let verifiedExitPrice = 0
+              let verifiedAmount = 0
+              let verifiedPnlPercent: number | null = null
+              let isVerifiedTrade = false
+
+              try {
+                const trades = await getFuturesUserTrades(serverBinanceGlobal.apiKey, serverBinanceGlobal.apiSecret, cSym, 10)
+                if (Array.isArray(trades) && trades.length > 0) {
+                  const matchingSell = trades.find((t: any) =>
+                    Math.abs(Number(t.time) - incTime) <= 60000 && t.side === "SELL"
+                  ) || trades[0]
+
+                  if (matchingSell) {
+                    verifiedExitPrice = parseFloat(matchingSell.price || "0")
+                    verifiedAmount = parseFloat(matchingSell.qty || "0")
+
+                    const priorBuys = trades.filter((t: any) => t.side === "BUY" && Number(t.time) <= Number(matchingSell.time))
+                    if (priorBuys.length > 0) {
+                      const totalBuyQty = priorBuys.reduce((sum: number, b: any) => sum + parseFloat(b.qty || "0"), 0)
+                      const totalBuyCost = priorBuys.reduce((sum: number, b: any) => sum + (parseFloat(b.qty || "0") * parseFloat(b.price || "0")), 0)
+                      if (totalBuyQty > 0) {
+                        verifiedEntryPrice = totalBuyCost / totalBuyQty
+                      }
+                    }
+
+                    if (verifiedEntryPrice > 0 && verifiedExitPrice > 0) {
+                      isVerifiedTrade = true
+                      const priceDiffPct = ((verifiedExitPrice - verifiedEntryPrice) / verifiedEntryPrice) * 100
+                      verifiedPnlPercent = Number((priceDiffPct * 5).toFixed(2)) // 5x vadeli ROI tahmini
+                    }
+                  }
+                }
+              } catch {}
+
+              // Sadece doğrulanmış gerçek işlemleri geçmişe ekle (0 fiyatlı sahte kayıt oluşturma!)
+              if (isVerifiedTrade && verifiedEntryPrice > 0 && verifiedExitPrice > 0) {
+                const usdtRate = cachedUsdtTry?.rate || 49.14
+                const netTry = inc.income * usdtRate
+                const isProfit = inc.income >= 0
+                const newClosedPos: any = {
+                  id: `futures-income-${inc.tranId || incTime}`,
+                  symbol: cSym,
+                  name: `${cSym} (5x Vadeli)`,
+                  side: "BUY",
+                  entryPrice: verifiedEntryPrice,
+                  currentPrice: verifiedExitPrice,
+                  closePrice: verifiedExitPrice,
+                  amount: verifiedAmount,
+                  totalTry: verifiedAmount * verifiedEntryPrice * usdtRate,
+                  pnl: inc.income,
+                  netPnlTry: netTry,
+                  pnlPercent: verifiedPnlPercent,
+                  openedAt: new Date(incTime - 3600000).toLocaleTimeString("tr-TR"),
+                  openedTimestamp: incTime - 3600000,
+                  status: "CLOSED",
+                  closeReason: isProfit ? "Binance Global Kâr Satışı (Doğrulandı)" : "Binance Global Stop Loss (Doğrulandı)",
+                  closedAt: new Date(incTime).toISOString(),
+                  closedTimestamp: incTime,
+                  triggerType: "MANUAL",
+                  orderType: "MARKET",
+                  isFutures: true,
+                  leverage: 5,
+                  exchange: "BINANCE_GLOBAL_FUTURES",
+                }
+                currentHist.unshift(newClosedPos)
+                appendServerHistory(newClosedPos).catch(() => {})
               }
-              currentHist.unshift(newClosedPos)
-              appendServerHistory(newClosedPos).catch(() => {})
             }
           }
-          state.history = currentHist
+          // Giriş fiyatı ve miktarı 0 olan hayalet/bozuk kayıtları arayüzden ve geçmişten temizle
+          state.history = currentHist.filter((h: any) => !(h.isFutures && (!h.entryPrice || h.entryPrice <= 0) && (!h.amount || h.amount <= 0)))
         }
       } catch (err: any) {
         binanceGlobalInfo = {

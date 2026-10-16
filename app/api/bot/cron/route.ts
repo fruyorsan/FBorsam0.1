@@ -276,9 +276,9 @@ export const MEME_TOKENS = new Set([
 // ğŸ’ POPÃœLER KRÄ°PTO & HÄ°BRÄ°T LÄ°DERLER (300+ Coin ArasÄ±ndan YÃ¼ksek Hacimliler)
 export const POPULAR_CRYPTO = new Set([
   "BTC", "ETH", "BNB", "SOL", "XRP", "DOGE", "PEPE", "SHIB", "BONK", "FLOKI",
-  "PENGU", "SUI", "RENDER", "NEAR", "AVAX", "APT", "FET", "TIA", "ARB", "WIF",
+  "PENGU", "SUI", "RENDER", "NEAR", "AVAX", "APT", "FET", "TON", "ARB", "WIF",
   "ENA", "INJ", "TURBO", "NEIRO", "DOT", "ADA", "LINK", "MATIC", "POL", "OP",
-  "FTM", "ATOM", "ALGO", "SAND", "MANA", "GALA", "AXS", "WLD", "TAO", "SEI"
+  "FTM", "ATOM", "ALGO", "SAND", "MANA", "GALA", "AXS", "TAO", "SEI"
 ])
 
 // Mikro coinler (BONK, PEPE, SHIB) ve standart coinler iÃ§in dinamik basamak formatlayÄ±cÄ±
@@ -1437,6 +1437,8 @@ export async function GET(_request: NextRequest) {
           symbol: string
           pair: string
           price: number
+          high: number
+          low: number
           bid: number
           change24h: number
           rangePos: number
@@ -1525,7 +1527,6 @@ export async function GET(_request: NextRequest) {
           // Hacim & Likidite Ağırlığı (Hacmi yüksek olan her zaman öne geçer):
           if (quoteVolume > 20000000) quickScore += 25
           else if (quoteVolume > 8000000) quickScore += 18
-          else if (quoteVolume > 3000000) quickScore += 12
 
           if (isMeme) quickScore += 25    // Popüler meme coinleri
           if (isPopular) quickScore += 20 // Popüler kripto / hibrit liderler
@@ -1534,9 +1535,6 @@ export async function GET(_request: NextRequest) {
           // 🌐 Sektör & Anlatı Liderliği (AI, RWA, L1):
           const spotNarrative = getNarrativeSector(sym)
           if (spotNarrative) quickScore += spotNarrative.bonus
-
-          // Sığ tahta ve aşırı makas koruması:
-          if (spreadPct > 0.35) continue
 
           // Trend veya Dip Avı Puanı:
           if (change24h >= 0.5 && change24h <= 8.0) quickScore += 15
@@ -1902,6 +1900,8 @@ export async function GET(_request: NextRequest) {
                   symbol: cand.sym,
                   pair: cand.pair,
                   price: cand.price,
+                  high: cand.high,
+                  low: cand.low,
                   bid: cand.bid,
                   change24h: cand.change24h,
                   rangePos: Math.round(cand.rangePos),
@@ -1955,8 +1955,8 @@ export async function GET(_request: NextRequest) {
                 name: cand.symbol,
                 binance: cand.pair,
                 quoteVolume24h: cand.quoteVolume,
-                high24h: cand.price,
-                low24h: cand.price,
+                high24h: cand.high,
+                low24h: cand.low,
                 currentPrice: cand.price,
               })
               if (mtf) {
@@ -1990,6 +1990,11 @@ export async function GET(_request: NextRequest) {
           let scoreB = b.score
           if (MEME_TOKENS.has(a.symbol)) scoreA += 15
           if (MEME_TOKENS.has(b.symbol)) scoreB += 15
+          // 🌐 Hibrit portföy dengesi: Mevcut slotta DeFi varsa Kripto/Meme'e öncelik, Kripto/Meme varsa DeFi'ye öncelik
+          if (existingHasDefi && !DEFI_TOKENS.has(a.symbol)) scoreA += 20
+          if (existingHasDefi && !DEFI_TOKENS.has(b.symbol)) scoreB += 20
+          if (existingHasCrypto && DEFI_TOKENS.has(a.symbol)) scoreA += 20
+          if (existingHasCrypto && DEFI_TOKENS.has(b.symbol)) scoreB += 20
           return scoreB - scoreA || b.quoteVolume - a.quoteVolume
         })
 
@@ -2386,7 +2391,10 @@ export async function GET(_request: NextRequest) {
                     orderId: closingMeta?.orderId || null,
                   }
 
-                  await appendServerHistory(newClosedPos)
+                  // Sadece giriş ve çıkış fiyatı doğrulanmış gerçek işlemleri geçmişe kaydet (0 fiyatlı sahte/fonlama kayıtlarını engelle)
+                  if (isVerifiedTrade && verifiedEntryPrice > 0 && verifiedExitPrice > 0) {
+                    await appendServerHistory(newClosedPos)
+                  }
 
                   // 🧹 Borsa kaynaklı kapanan pozisyonun Redis meta verilerini ve yetim emirlerini temizle:
                   await clearFuturesPositionMeta(cSym).catch(() => {})
@@ -2505,8 +2513,8 @@ export async function GET(_request: NextRequest) {
             const isMajorCoin = ["BTC", "ETH", "BNB", "SOL", "XRP"].includes(cleanSym)
             const isMemeCoin = isMeme || ["DOGE", "PEPE", "SHIB", "BONK", "FLOKI", "WIF", "NEIRO", "TURBO", "PENGU", "1000PEPE", "1000SHIB", "1000BONK", "1000FLOKI"].includes(cleanSym)
             
-            const defaultCoinTp1 = isMemeCoin ? 6.50 : isMajorCoin ? 3.50 : 5.00
-            const defaultCoinTp2 = isMemeCoin ? 15.00 : isMajorCoin ? 7.50 : 10.00
+            const defaultCoinTp1 = isMemeCoin ? 7.00 : isMajorCoin ? 5.00 : 5.60
+            const defaultCoinTp2 = isMemeCoin ? 15.00 : isMajorCoin ? 9.00 : 11.00
 
             const customTp = await getFuturesCustomTp(cleanSym)
             const calculatedSlPct = 3.50 // -%3.50 geniş swing stop-loss
@@ -3650,7 +3658,7 @@ export async function GET(_request: NextRequest) {
 
               // CoinGecko ön filtre listesi + Ana Likit Vadeli Çiftler (SOL, BNB, XRP, DOGE, SUI, NEAR, AVAX, LINK vb. dışarıda kalmasın)
               const cgPairs: string[] = prefilterState.candidates.map((c: FilteredCandidate) => c.binanceSymbol)
-              const THIN_FUTURES_BLACKLIST = new Set(["BTWUSDT", "AKEUSDT", "VVVUSDT", "BIOUSDT", "TSTUSDT", "BROCCOLIUSDT"])
+              const THIN_FUTURES_BLACKLIST = new Set(["BTWUSDT", "AKEUSDT", "VVVUSDT", "BIOUSDT", "TSTUSDT", "BROCCOLIUSDT", "WLDUSDT"])
               const rawPrefilteredPairs: string[] = Array.from(new Set([...FALLBACK_TOP_PAIRS, ...cgPairs]))
               const prefilteredPairs: string[] = rawPrefilteredPairs.filter((sym) => {
                 if (THIN_FUTURES_BLACKLIST.has(sym)) return false
@@ -3890,6 +3898,24 @@ export async function GET(_request: NextRequest) {
                   const isReversalMode = isHighRedMarket || (sfpCheck.detected && cvdCheck.detected)
                   const strategyMode: "SFP_REVERSAL_MODE" | "TREND_MODE" = isReversalMode ? "SFP_REVERSAL_MODE" : "TREND_MODE"
 
+                  // 15m Bollinger Bandı ve Aşırı Şişme (%B > 0.85) Engeli:
+                  let bollingerPctB15m = 0.5
+                  if (closes15m.length >= 20) {
+                    const variance = closes15m.slice(-20).reduce((sum: number, c: number) => sum + Math.pow(c - sma20_15m, 2), 0) / 20
+                    const stdDev = Math.sqrt(variance)
+                    const upperBand = sma20_15m + 2 * stdDev
+                    const lowerBand = sma20_15m - 2 * stdDev
+                    bollingerPctB15m = (upperBand - lowerBand) > 0 ? (curPrice - lowerBand) / (upperBand - lowerBand) : 0.5
+                  }
+
+                  // 5m Tepe Satış Fitili & FOMO Engeli:
+                  const o5m = parseFloat(m0_5[1]) || curPrice
+                  const h5m = parseFloat(m0_5[2]) || curPrice
+                  const c5m = parseFloat(m0_5[4]) || curPrice
+                  const body5m = Math.abs(c5m - o5m) || (curPrice * 0.0005)
+                  const upperWick5m = h5m - Math.max(o5m, c5m)
+                  const candle5mChange = o5m > 0 ? ((c5m - o5m) / o5m) * 100 : 0
+
                   if (strategyMode === "SFP_REVERSAL_MODE") {
                     // 🎯 Dip Avcısı Reversal Modu: SMA20 ve RSI >= 46 ŞARTLARI DEVRE DIŞI!
                     // 1. Kapanış > Süpürülen Swing Low şartı
@@ -3906,14 +3932,20 @@ export async function GET(_request: NextRequest) {
                     if (takerBuy15m < 48 && !isDoubleGreen15m) { rejectionReasons[candSym] = `sfp_taker_${takerBuy15m.toFixed(1)}`; return null }
                   } else {
                     // 🚀 TREND_MODE (Normal / Boğa / Dengeli Piyasa):
-                    // 1. Fiyat 15m SMA20 üzerinde veya SMA20 desteğinde (%0.4 tolerans) olmak zorunda
-                    if (curPrice < sma20_15m * 0.996) { rejectionReasons[candSym] = "below_sma20"; return null }
-                    // 2. RSI 42 - 78 sağlıklı trend ve boğa momentum bölgesinde olmalı
-                    if (rsi14 < 42 || rsi14 > 78) { rejectionReasons[candSym] = `rsi_${rsi14.toFixed(1)}`; return null }
-                    // 3. Alıcı gücü ve trend/kırılım teyidi
-                    if (takerBuy15m < 48.0) { rejectionReasons[candSym] = `taker_${takerBuy15m.toFixed(1)}`; return null }
-                    const isVolumeBreakout = rvol15m >= 1.1 && takerBuy15m >= 50.5 && (isGreen15m || isGreen5m || isPrevGreen15m)
-                    const isBullTrendAligned = curPrice >= sma20_15m && rsi14 >= 48 && takerBuy15m >= 49.5 && (isGreen15m || isGreen5m || isPrevGreen15m || isPrevGreen5m)
+                    // 1. Fiyat 15m SMA20 üzerinde olmak zorunda (Düşüş trendindeki coini ASLA alma)
+                    if (curPrice < sma20_15m) { rejectionReasons[candSym] = "below_sma20"; return null }
+                    // 2. RSI 44 - 66 sağlıklı trend ve boğa momentum bölgesinde olmalı (Aşırı alım tepe engeli: > 66 kesinlikle alma!)
+                    if (rsi14 < 44 || rsi14 > 66) { rejectionReasons[candSym] = `rsi_${rsi14.toFixed(1)}_out_of_44_66`; return null }
+                    // 3. Bollinger %B Şişme Engeli: %B > 0.85 ise tepededir, satıcılar kafasına vurur, alma!
+                    if (bollingerPctB15m > 0.85) { rejectionReasons[candSym] = `bollinger_top_${bollingerPctB15m.toFixed(2)}`; return null }
+                    // 4. 5m Tepe Satıcı Baskısı Engeli (Üst fitil gövdeden 1.2 kat büyükse ve kırmızıysa alma!)
+                    if (upperWick5m > body5m * 1.2 && !isGreen5m) { rejectionReasons[candSym] = "upper_wick_5m_rejection"; return null }
+                    // 5. 5m FOMO / Ani Şişme Engeli (Son 5 dakikada %0.45'ten fazla fırlamışsa tepeden alma!)
+                    if (candle5mChange > 0.45) { rejectionReasons[candSym] = "fomo_pump_5m"; return null }
+                    // 6. Alıcı gücü ve trend/kırılım teyidi
+                    if (takerBuy15m < 50.0) { rejectionReasons[candSym] = `taker_${takerBuy15m.toFixed(1)}`; return null }
+                    const isVolumeBreakout = rvol15m >= 1.15 && takerBuy15m >= 51.5 && (isGreen15m || isGreen5m || isPrevGreen15m)
+                    const isBullTrendAligned = curPrice >= sma20_15m && rsi14 >= 48 && takerBuy15m >= 50.5 && (isGreen15m || isGreen5m || isPrevGreen15m || isPrevGreen5m)
                     if (!isVolumeBreakout && !isDoubleGreen15m && !isDoubleGreen5m && !isBullTrendAligned) {
                       rejectionReasons[candSym] = `no_align_rsi_${rsi14.toFixed(1)}_tkr_${takerBuy15m.toFixed(1)}`
                       return null
@@ -4357,8 +4389,10 @@ export async function GET(_request: NextRequest) {
                       if (buyRes.ok) {
                         const effectiveEntryPrice = (buyRes.avgPrice && buyRes.avgPrice > 0) ? buyRes.avgPrice : curPrice
                         const actualMargin = (formattedQty * effectiveEntryPrice) / targetLeverage
-                        const tp1PctDisplay = isCandMeme ? 6.50 : isCandMajor ? 3.50 : 5.00
-                        const tp2PctDisplay = isCandMeme ? 15.00 : isCandMajor ? 7.50 : 10.00
+                        const baseTp1 = isCandMeme ? 7.00 : isCandMajor ? 5.00 : 5.60
+                        const tp1PctDisplay = Math.max(baseTp1, Number((dynamicSlPct * 1.60).toFixed(2)))
+                        const baseTp2 = isCandMeme ? 15.00 : isCandMajor ? 9.00 : 11.00
+                        const tp2PctDisplay = Math.max(baseTp2, Number((dynamicSlPct * 2.50).toFixed(2)))
                         const slPctDisplay = dynamicSlPct
 
                         const symFilters = await getFuturesSymbolFilters(candSym)

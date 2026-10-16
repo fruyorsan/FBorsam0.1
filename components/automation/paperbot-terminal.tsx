@@ -3577,13 +3577,13 @@ export function PaperbotTerminal({ onBack }: { onBack?: () => void }) {
                         const pnlVal = t.netPnlTry !== undefined 
                           ? t.netPnlTry 
                           : (isFutures ? toTry(t.pnl || 0) : (t.pnl || 0))
-                        const pnlPct = t.pnlPercent !== undefined
-                          ? t.pnlPercent
+                        const pnlPct = (t.pnlPercent !== undefined && t.pnlPercent !== null)
+                          ? Number(t.pnlPercent)
                           : (entry > 0 ? ((exit - entry) / entry) * 100 * (isFutures ? (t.leverage || 5) : 1) : 0)
                         const isProfit = pnlVal >= 0
 
                         // Zirve farkı (Çıkış zirveye ne kadar yakındı?)
-                        const isClosedAtPeak = Math.abs(peakPct - pnlPct) <= 0.20
+                        const isClosedAtPeak = isProfit && entry > 0 && Math.abs(peakPct - pnlPct) <= 0.20
 
                         // Format Date
                         let dateStr = "—"
@@ -3680,11 +3680,17 @@ export function PaperbotTerminal({ onBack }: { onBack?: () => void }) {
                                   )}
                                 </div>
                                 <span className="text-[10px] text-muted-foreground">
-                                  {isClosedAtPeak
+                                  {entry <= 0
+                                    ? "—"
+                                    : isClosedAtPeak
                                     ? "🎯 Zirvede Kilitlendi"
-                                    : peakPct > pnlPct
-                                    ? `Düzeltmede Korundu (Fark: %${(peakPct - pnlPct).toFixed(2)})`
-                                    : "Hedefte Çıkıldı"}
+                                    : isProfit
+                                    ? (peakPct > pnlPct
+                                        ? `Düzeltmede Korundu (Fark: %${(peakPct - pnlPct).toFixed(2)})`
+                                        : "Hedefte Çıkıldı")
+                                    : peakPct > 0
+                                    ? `Zirveden Dönüş (Zirve: +%${peakPct.toFixed(2)})`
+                                    : "Stop / Zarar Kesildi"}
                                 </span>
                               </div>
                             </td>

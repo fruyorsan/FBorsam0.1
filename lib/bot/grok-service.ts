@@ -35,7 +35,7 @@ export const NARRATIVE_SECTORS: Record<string, { name: string; bonus: number; de
     name: "Yapay Zeka (AI / Agentic)",
     bonus: 20,
     description: "Son dönemin en güçlü anlatısı: AI ajanları ve merkeziyetsiz hesaplama protokolleri",
-    coins: new Set(["TAO", "NEAR", "RENDER", "RNDR", "FET", "ASI", "WLD", "ARKM", "GRT", "IO", "ATH", "AI", "VIRTUAL"]),
+    coins: new Set(["TAO", "NEAR", "RENDER", "RNDR", "FET", "ASI", "ARKM", "GRT", "IO", "ATH", "AI", "VIRTUAL"]),
   },
   RWA: {
     name: "Gerçek Varlıklar (RWA)",
@@ -300,7 +300,7 @@ Return strictly valid JSON:
 
 // Varsayılan dinamik kilit açılımı tohum listesi (Redis'ten dinamik güncellenir)
 export const DEFAULT_HIGH_UNLOCK_TOKENS = new Set([
-  "PIXEL", "AEVO", "ACE", "ID", "PORTAL", "ALT"
+  "PIXEL", "AEVO", "ACE", "ID", "PORTAL", "ALT", "TIA", "STRK", "WLD", "DYDX"
 ])
 export const HIGH_UNLOCK_VETO_TOKENS = DEFAULT_HIGH_UNLOCK_TOKENS
 

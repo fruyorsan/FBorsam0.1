@@ -413,12 +413,25 @@ export function calculateMonotonicStopTarget(params: {
 
   // MONOTONİK KURAL: newStop = max(currentStop, candidateStop)
   // Stop seviyesi ASLA geriye / aşağıya doğru çekilemez!
-  const finalStopPrice = Math.max(currentStopPrice, candidateStop)
+  let finalStopPrice = candidateStop
+  let finalStage = stage
+  let finalReason = reason
+
+  if (currentStopPrice > candidateStop) {
+    finalStopPrice = currentStopPrice
+    finalReason = `Mevcut Stop Korundu ($${currentStopPrice})`
+  }
+
+  const formattedStop = finalStopPrice < 0.001 
+    ? Number(finalStopPrice.toFixed(8))
+    : finalStopPrice < 1
+    ? Number(finalStopPrice.toFixed(6))
+    : Number(finalStopPrice.toFixed(4))
 
   return {
-    newStopPrice: Number(finalStopPrice.toFixed(6)),
-    stopStage: stage,
-    stageReason: reason,
+    newStopPrice: formattedStop,
+    stopStage: finalStage,
+    stageReason: finalReason,
   }
 }
 
