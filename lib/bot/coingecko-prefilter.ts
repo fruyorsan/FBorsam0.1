@@ -312,9 +312,10 @@ function getCoinGeckoConfig() {
 
 // CoinGecko API geçici olarak kapalı veya hız sınırındayken devreye girecek güvenilir Binance Futures listesi
 export const FALLBACK_TOP_PAIRS = [
-  "BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT", "XRPUSDT", "DOGEUSDT", "ADAUSDT",
-  "AVAXUSDT", "LINKUSDT", "SUIUSDT", "NEARUSDT", "APTUSDT", "RENDERUSDT",
-  "TAOUSDT", "FETUSDT", "ARBUSDT", "OPUSDT", "INJUSDT", "TIAUSDT", "SEIUSDT"
+  "SOLUSDT", "XRPUSDT", "DOGEUSDT", "SUIUSDT", "HYPEUSDT", "NEARUSDT",
+  "AVAXUSDT", "LINKUSDT", "ENAUSDT", "INJUSDT", "APTUSDT", "ARBUSDT",
+  "TAOUSDT", "WLDUSDT", "AAVEUSDT", "UNIUSDT", "1000PEPEUSDT", "RENDERUSDT",
+  "FETUSDT", "TIAUSDT", "SEIUSDT", "OPUSDT", "ADAUSDT", "BNBUSDT"
 ]
 
 /**

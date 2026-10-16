@@ -2500,12 +2500,12 @@ export async function GET(_request: NextRequest) {
             // Anlık grafik analizi ile dinamik ayar:
             try {
               const [kRes15m, tick24Res] = await Promise.all([
-                publicFetch(`${BINANCE_FUTURES_BASE}/fapi/v1/klines?symbol=${sym}&interval=15m&limit=20`, {
-                  signal: AbortSignal.timeout(2500),
+                publicFetch(`${BINANCE_FUTURES_BASE}/fapi/v1/klines?symbol=${sym}&interval=15m&limit=30`, {
+                  signal: AbortSignal.timeout(3000),
                   cache: "no-store",
                 }),
                 publicFetch(`${BINANCE_FUTURES_BASE}/fapi/v1/ticker/24hr?symbol=${sym}`, {
-                  signal: AbortSignal.timeout(2500),
+                  signal: AbortSignal.timeout(3000),
                   cache: "no-store",
                 }),
               ])
@@ -2605,6 +2605,38 @@ export async function GET(_request: NextRequest) {
               atrPct: posAtrPct,
               isTp1Taken: alreadyTp1,
             })
+
+            // 🔒 BORSADAKİ GERÇEK STOP_MARKET EMRİNİ BAŞABAŞA (+%0.25 KÂR) OTOMATİK TAŞIMA:
+            // Fiyat +%1.20 (10x'te +%12 ROI) üzerine çıktıysa ve borsadaki mevcut stop hala giriş fiyatının altındaysa,
+            // borsadaki gerçek STOP_MARKET emrini atomik olarak girişin +%0.25 üstüne (komisyon üstü net kâr) taşır!
+            if ((rawPriceDiffPct >= 1.20 || peakPriceGainPct >= 1.20) && markP > entryP * 1.005) {
+              try {
+                const openOrders = await getFuturesOpenOrders(globKey, globSecret, sym)
+                const curStopOrder = openOrders.find((o) => o.type === "STOP_MARKET" || o.type === "STOP")
+                const currentStopTrigger = curStopOrder?.stopPrice || 0
+                if (currentStopTrigger > 0 && currentStopTrigger < entryP) {
+                  const symFilters = await getFuturesSymbolFilters(sym)
+                  const symTick = symFilters?.tickSize || 0.0001
+                  const safeBeTrigger = parseFloat(formatWithTickSize(Math.max(entryP * 1.0025, monoStop.newStopPrice), symTick))
+                  if (safeBeTrigger < markP * 0.998) {
+                    const upgStopRes = await executeBinanceFuturesOrder({
+                      apiKey: globKey,
+                      apiSecret: globSecret,
+                      symbol: sym,
+                      side: "SELL",
+                      type: "STOP_MARKET",
+                      stopPrice: safeBeTrigger,
+                      closePosition: true,
+                      workingType: "MARK_PRICE",
+                    }).catch(() => ({ ok: false, orderId: undefined }))
+                    if (upgStopRes.ok && upgStopRes.orderId) {
+                      await cancelFuturesAllOpenOrders(globKey, globSecret, sym, [upgStopRes.orderId]).catch(() => {})
+                      console.log(logPrefix, `🔒 [BORSA STOP BAŞABAŞA ÇEKİLDİ] ${sym} gerçek STOP_MARKET emri ${currentStopTrigger}$ -> ${safeBeTrigger}$ (+%0.25 kâr kilidi) seviyesine yükseltildi!`)
+                    }
+                  }
+                }
+              } catch {}
+            }
 
             // 🧪 YENİ ÇIKIŞ KURALI MODU (useNewExitRules)
             const useNewExitRules = Boolean(exchangeSettings?.useNewExitRules)
@@ -2940,8 +2972,8 @@ export async function GET(_request: NextRequest) {
 
 
             // C.0) ⏱️ ZAMAN BAZLI ÇIKIŞ (DİP AVCISI TIME-STOP):
-            // Dipten alınan coin 45 - 60 dakika (posHours >= 0.75 && posHours <= 1.5) sonunda
-            // anlık kâr < +%0.50 ise VE son iki 15m mumunda CVD azalıyorsa 2. satış dalgasına yakalanmamak için piyasa emriyle kapat:
+            // Dipten alınan coin 45 - 90 dakika (posHours >= 0.75 && posHours <= 1.5) sonunda
+            // kâra geçemeyip zararda sürünüyorsa (rawPriceDiffPct < -0.35) VE son iki 15m mumunda CVD azalıyorsa 2. satış dalgasına yakalanmamak için kapat:
             let isCvdDeclining = true
             if (klines15mList && klines15mList.length >= 3) {
               const m1 = klines15mList[klines15mList.length - 2]
@@ -2952,9 +2984,9 @@ export async function GET(_request: NextRequest) {
               const m2Vol = parseFloat(m2[7]) || 1
               const m2Taker = parseFloat(m2[10]) || 0
               const m2Ratio = m2Taker / m2Vol
-              isCvdDeclining = m1Ratio <= m2Ratio || m1Ratio < 0.50
+              isCvdDeclining = m1Ratio <= m2Ratio && m1Ratio < 0.46
             }
-            const isDipTimeStopTriggered = posHours >= 0.75 && posHours <= 1.5 && rawPriceDiffPct < 0.50 && isCvdDeclining
+            const isDipTimeStopTriggered = posHours >= 0.75 && posHours <= 1.5 && rawPriceDiffPct < -0.35 && isCvdDeclining
             if (isDipTimeStopTriggered) {
               const filters = await getFuturesSymbolFilters(sym)
               const stepSize = filters?.stepSize || 0.001
@@ -3411,6 +3443,7 @@ export async function GET(_request: NextRequest) {
 
             // ğŸ›¡ï¸            // 🌐 Sektör Sepetlerinin 24h Ortalama Göreli Güç (RS) Liderliğini ve Global Piyasa Genişliğini dinamik hesapla:
             let dynamicSectorBonuses = new Map<string, { sectorKey: string; sectorName: string; bonus: number; avgRs: number }>()
+            const futures24hQuoteVol = new Map<string, number>()
             try {
               const tick24AllRes = await publicFetch(`${BINANCE_FUTURES_BASE}/fapi/v1/ticker/24hr`, { cache: "no-store" }, 120000)
               if (tick24AllRes.ok) {
@@ -3425,6 +3458,7 @@ export async function GET(_request: NextRequest) {
                   for (const item of all24hList) {
                     if (!item?.symbol?.endsWith("USDT")) continue
                     const qv = parseFloat(item.quoteVolume) || 0
+                    futures24hQuoteVol.set(item.symbol, qv)
                     if (qv >= 5_000_000) {
                       liquidFuturesCount++
                       if ((parseFloat(item.priceChangePercent) || 0) < 0) redFuturesCount++
@@ -3488,7 +3522,16 @@ export async function GET(_request: NextRequest) {
 
               // CoinGecko ön filtre listesi + Ana Likit Vadeli Çiftler (SOL, BNB, XRP, DOGE, SUI, NEAR, AVAX, LINK vb. dışarıda kalmasın)
               const cgPairs: string[] = prefilterState.candidates.map((c: FilteredCandidate) => c.binanceSymbol)
-              const prefilteredPairs: string[] = Array.from(new Set([...cgPairs, ...FALLBACK_TOP_PAIRS]))
+              const THIN_FUTURES_BLACKLIST = new Set(["BTWUSDT", "AKEUSDT", "VVVUSDT", "BIOUSDT", "TSTUSDT", "BROCCOLIUSDT"])
+              const rawPrefilteredPairs: string[] = Array.from(new Set([...FALLBACK_TOP_PAIRS, ...cgPairs]))
+              const prefilteredPairs: string[] = rawPrefilteredPairs.filter((sym) => {
+                if (THIN_FUTURES_BLACKLIST.has(sym)) return false
+                if (futures24hQuoteVol.size > 0) {
+                  const fVol = futures24hQuoteVol.get(sym) || 0
+                  if (fVol < 25_000_000) return false
+                }
+                return true
+              })
               const openSymbols = new Set(openFuturesPos.map((p) => p.symbol.toUpperCase()))
 
               // 🛡️ Açık pozisyonları ve Soğuma (Cooldown) sürecindeki coinleri ele:
