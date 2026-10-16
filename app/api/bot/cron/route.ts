@@ -178,7 +178,12 @@ const publicFetch = async (url: string, init: RequestInit = {}, customTtlMs?: nu
   }
 
   const ttl = customTtlMs || (url.includes("ticker/24hr") ? 180000 : 45000)
-  const urlHash = Buffer.from(url).toString("base64").slice(0, 48).replace(/[/+=]/g, "_")
+  let h = 2166136261
+  for (let i = 0; i < url.length; i++) {
+    h ^= url.charCodeAt(i)
+    h = Math.imul(h, 16777619)
+  }
+  const urlHash = `${(h >>> 0).toString(16)}_${Buffer.from(url.slice(-45)).toString("base64").replace(/[/+=]/g, "_")}`
 
   // 2. L2 Redis Kontrolü (Serverless Cold Start Kalkanı)
   try {
