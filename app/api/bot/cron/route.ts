@@ -97,6 +97,7 @@ import {
 import {
   getSymbolLiquidationStats,
   ensureLiquidationWebSocket,
+  fetchRecentLiquidationsFromRest,
 } from "@/lib/bot/liquidation-tracker"
 import type { Position, TradeLog, TradeState } from "@/lib/bot/engine"
 import {
@@ -3780,6 +3781,23 @@ export async function GET(_request: NextRequest) {
               const minFuturesScore = isHighRedMarket ? 80 : 55
               const rejectionReasons: Record<string, string> = {}
 
+              // 🔎 LİKİDASYON AKIŞI SAĞLIK KONTROLÜ (tur başına 1 kez):
+              // Binance, REST ucu /fapi/v1/allForceOrders'ı KALDIRDI (HTTP 404 döner) ve
+              // WebSocket akışı serverless'ta istek başına RAM'de tutulduğu için birikmez.
+              // Yani likidasyon verisi pratikte HİÇ gelmiyor. Bu durumda "likidasyon teyidi
+              // yok" diyerek SFP fırsatlarını elemek anlamsızdır: veri yokluğu ≠ sahte dip.
+              // Akış ölüyse teyit, CVD/taker/RSI şartlarıyla sağlanır.
+              let liquidationFeedHealthy = false
+              try {
+                const liqProbe = await fetchRecentLiquidationsFromRest("BTCUSDT", 5)
+                liquidationFeedHealthy = liqProbe.length > 0
+              } catch {}
+              console.log(
+                logPrefix,
+                `🔎 [LİKİDASYON AKIŞI] ${liquidationFeedHealthy ? "aktif — likidasyon teyidi uygulanacak" : "ÖLÜ (veri kaynağı yok) — SFP teyidi CVD/taker/RSI ile yapılacak"}`
+              )
+              let sfpPatternHits = 0
+
               const evaluateFuturesCandidate = async (candSym: string): Promise<FuturesScored | null> => {
                 try {
                   const [kRes15m, kRes5m, bookRes, premRes, liqStats, oiStats, depth5] = await Promise.all([
@@ -3966,7 +3984,8 @@ export async function GET(_request: NextRequest) {
                   const sfpCheck = detectLiquiditySweepAbsorption(closedCandles15m, 16, {
                     longLiquidationUsdt: liqStats.longLiquidationUsdt,
                     liquidationCount: liqStats.longCount,
-                    requireLiquidation: isHighRedMarket,
+                    // Likidasyon teyidi YALNIZCA akış gerçekten veri üretiyorsa zorunlu tutulur.
+                    requireLiquidation: isHighRedMarket && liquidationFeedHealthy,
                     minLiquidationUsdt: 500,
                   })
                   const cvdCheck = detectCvdDivergence(closedCandles15m, closedTakerRatios15m)
@@ -3995,12 +4014,25 @@ export async function GET(_request: NextRequest) {
 
                   if (strategyMode === "SFP_REVERSAL_MODE") {
                     // 🎯 Dip Avcısı Reversal Modu: SMA20 ve RSI >= 46 ŞARTLARI DEVRE DIŞI!
-                    // 1. Kapanış > Süpürülen Swing Low şartı
-                    if (!sfpCheck.detected) { rejectionReasons[candSym] = "sfp_not_detected"; return null }
-                    // 2. Zorunlu Long Likidasyon Teyidi (Sahte dip iğnelerini eler):
-                    if (!sfpCheck.liquidationConfirmed && liqStats.longCount === 0) {
-                      rejectionReasons[candSym] = "sfp_no_liq"
+                    if (sfpCheck.candlePattern) sfpPatternHits++
+                    // 1. Kapanış > Süpürülen Swing Low şartı (fitil deseni)
+                    if (!sfpCheck.detected) {
+                      rejectionReasons[candSym] = sfpCheck.vetoedByLiquidation
+                        ? "sfp_likidasyon_teyidi_yok"
+                        : "sfp_fitil_deseni_yok"
+                      return null
+                    }
+                    // 2. Zorunlu Long Likidasyon Teyidi — YALNIZCA akış sağlıklıysa uygulanır
+                    if (liquidationFeedHealthy && !sfpCheck.liquidationConfirmed && liqStats.longCount === 0) {
+                      rejectionReasons[candSym] = "sfp_likidasyon_teyidi_yok"
                       console.log(logPrefix, `🛑 [SAHTE DİP VETO] ${candSym} fitil altında zorunlu long tasfiyesi (forceOrder) patlamadı/emilmedi.`)
+                      return null
+                    }
+                    // 2b. Likidasyon akışı ÖLÜ iken teyit yerine alternatif emilim kanıtı:
+                    // fitil deseni zaten var; ayrıca alıcı baskısı (≥%48) VEYA CVD pozitif
+                    // uyumsuzluğu VEYA 15m çift yeşil mum olmalı. (Üçünün de yokluğu = sahte dip.)
+                    if (!liquidationFeedHealthy && takerBuy15m < 48 && !cvdCheck.detected && !isDoubleGreen15m) {
+                      rejectionReasons[candSym] = `sfp_emilim_yok_tkr_${takerBuy15m.toFixed(1)}`
                       return null
                     }
                     // 3. RSI(14) > 32 (Aşırı çöküş tükenmesi ve dönüş bölgesi)
@@ -4078,6 +4110,13 @@ export async function GET(_request: NextRequest) {
                   if (sfpCheck.liquidationConfirmed) {
                     score += 15
                     reasons.push(`🔥 Zorunlu Long Tasfiye Emilimi ($${(sfpCheck.longLiquidationUsdt || 0).toFixed(0)} hacim)`)
+                  }
+                  // 🔁 Likidasyon akışı ÖLÜ iken (kaynak Binance tarafından kaldırıldı) +15'lik
+                  // tasfiye bonusu hiç gelmez. Kanıta dayalı kısmi telafi: fitil süpürmesi +
+                  // CVD pozitif uyumsuzluğu + güçlü alıcı baskısı birlikte emilimi gösterir.
+                  if (!liquidationFeedHealthy && cvdCheck.detected && takerBuy15m >= 52) {
+                    score += 10
+                    reasons.push("Emilim Teyidi (likidasyon akışı yok; CVD + Taker)")
                   }
 
                   // CVD Pozitif Uyumsuzluk Bonusu (+25)
@@ -4168,6 +4207,14 @@ export async function GET(_request: NextRequest) {
 
                   if (score < minFuturesScore) {
                     rejectionReasons[candSym] = `low_score_${score}_min_${minFuturesScore}`
+                    // 🎯 SFP deseni uyduysa ama skor eşiği yetmediyse bunu AÇIKÇA yaz:
+                    // (Günlerce veri toplandıktan sonra eşiğin mi bağlayıcı olduğu görülsün.)
+                    if (strategyMode === "SFP_REVERSAL_MODE" && sfpCheck.candlePattern) {
+                      console.log(
+                        logPrefix,
+                        `🎯 [SFP DESENİ] ${candSym} fitil %${(sfpCheck.lowerWickRatio * 100).toFixed(0)}, skor ${score}/${minFuturesScore} — eşik altı, girilmedi.`
+                      )
+                    }
                     return null
                   }
 
@@ -4203,12 +4250,21 @@ export async function GET(_request: NextRequest) {
                   (scoredCandidates.length > 0 ? ` En iyi: ${scoredCandidates.slice(0, 3).map((s) => `${s.candSym}=${s.score}`).join(", ")}` : "")
               )
 
+              // 🧭 TEŞHİS: "Bot neden hiç işlem yapmıyor?" sorusunun tek satırlık cevabı.
+              console.log(
+                logPrefix,
+                `🧭 [GİRİŞ REJİMİ] Piyasa %${globalMarketRedRatioPct.toFixed(0)} kırmızı → ${isHighRedMarket ? "SFP dip-avı modu" : "TREND modu"} | Likidasyon akışı: ${liquidationFeedHealthy ? "aktif" : "ÖLÜ (veri yok)"} | Fitil deseni uyan aday: ${sfpPatternHits}/${candidatesToScan.length}`
+              )
+
               // 🔍 TEŞHİS: Hiç aday geçmediğinde "neden" sorusunu loga yaz.
               // (Vercel loglarında tek bakışta görülsün diye insan-okur özet.)
               if (scoredCandidates.length === 0 && Object.keys(rejectionReasons).length > 0) {
                 const humanizeRejection = (r: string): string => {
                   if (r.startsWith("low_score")) return "trend/hacim skoru eşiğin altında"
-                  if (r === "sfp_not_detected") return "SFP fitili/süpürmesi yok"
+                  if (r === "sfp_fitil_deseni_yok") return "SFP fitil deseni yok"
+                  if (r === "sfp_likidasyon_teyidi_yok") return "SFP deseni var, likidasyon teyidi yok"
+                  if (r.startsWith("sfp_taker_zayif")) return "SFP deseni var, alıcı baskısı zayıf"
+                  if (r.startsWith("sfp_emilim_yok")) return "SFP deseni var, emilim kanıtı yok"
                   if (r === "sfp_no_liq") return "likidasyon teyidi yok"
                   if (r.startsWith("sfp_rsi")) return "SFP+RSI uygun değil"
                   if (r.startsWith("sfp_taker")) return "SFP+taker alıcı baskısı yok"

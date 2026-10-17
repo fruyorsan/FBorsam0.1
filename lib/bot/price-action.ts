@@ -96,6 +96,10 @@ export interface LiquiditySweepAbsorptionResult {
   liquidationConfirmed?: boolean
   longLiquidationUsdt?: number
   liquidationCount?: number
+  /** Mum deseni (fitil + geri kapanış + yeşil gövde) sağlandı mı? (likidasyon teyidi HARİÇ) */
+  candlePattern?: boolean
+  /** Mum deseni vardı ama likidasyon teyidi gelmediği için veto edildi mi? */
+  vetoedByLiquidation?: boolean
 }
 
 /**
@@ -145,6 +149,7 @@ export function detectLiquiditySweepAbsorption(
   const bullishBody = cur.c >= cur.o || (cur.o - cur.c) / range <= 0.20
 
   let detected = sweptBelow && closedAbove && strongWick && bullishBody
+  const candlePattern = detected
 
   const reasons: string[] = []
   if (detected) {
@@ -153,6 +158,7 @@ export function detectLiquiditySweepAbsorption(
   }
 
   let liquidationConfirmed = false
+  let vetoedByLiquidation = false
   if (liquidationConfirmation) {
     const minLiq = liquidationConfirmation.minLiquidationUsdt ?? 500
     const hasFlush = liquidationConfirmation.longLiquidationUsdt >= minLiq || liquidationConfirmation.liquidationCount >= 1
@@ -162,6 +168,7 @@ export function detectLiquiditySweepAbsorption(
       reasons.push(`🔥 Zorunlu Long Tasfiye Emilimi Teyit Edildi ($${liquidationConfirmation.longLiquidationUsdt.toFixed(0)} hacim, ${liquidationConfirmation.liquidationCount} adet forceOrder)`)
     } else if (liquidationConfirmation.requireLiquidation) {
       detected = false
+      vetoedByLiquidation = candlePattern
       reasons.push("🛑 Sahte Dip Uyarısı: Alt fitilde zorunlu long tasfiyesi patlamadı/emilmedi")
     }
   }
@@ -175,6 +182,8 @@ export function detectLiquiditySweepAbsorption(
     liquidationConfirmed,
     longLiquidationUsdt: liquidationConfirmation?.longLiquidationUsdt,
     liquidationCount: liquidationConfirmation?.liquidationCount,
+    candlePattern,
+    vetoedByLiquidation,
   }
 }
 
