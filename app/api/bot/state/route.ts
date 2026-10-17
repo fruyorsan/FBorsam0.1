@@ -238,7 +238,9 @@ export async function GET(request: NextRequest) {
                     if (verifiedEntryPrice > 0 && verifiedExitPrice > 0) {
                       isVerifiedTrade = true
                       const priceDiffPct = ((verifiedExitPrice - verifiedEntryPrice) / verifiedEntryPrice) * 100
-                      verifiedPnlPercent = Number((priceDiffPct * 5).toFixed(2)) // 5x vadeli ROI tahmini
+                      // Kaldıraç sabit 5x varsayılmaz; bilinen kaldıraçla ROI tahmini yapılır.
+                      const levForRoi = Number((state as any)?.strategy?.leverage) || 3
+                      verifiedPnlPercent = Number((priceDiffPct * levForRoi).toFixed(2))
                     }
                   }
                 }
@@ -249,10 +251,15 @@ export async function GET(request: NextRequest) {
                 const usdtRate = cachedUsdtTry?.rate || 49.14
                 const netTry = inc.income * usdtRate
                 const isProfit = inc.income >= 0
+                // ⚠️ DÜRÜSTLÜK NOTU: Bu kayıtta açılış zamanı borsadan alınamaz; eskiden
+                // `kapanış - 1 saat` diye UYDURULUYORDU ve bu yüzden "ortalama tutma süresi"
+                // her zaman tam 1 saat çıkıyordu. Artık tahmin olduğu açıkça işaretlenir ve
+                // analitik bu kayıtları tutma-süresi istatistiğinden dışlar.
+                const estLeverage = Number((state as any)?.strategy?.leverage) || 3
                 const newClosedPos: any = {
                   id: `futures-income-${inc.tranId || incTime}`,
                   symbol: cSym,
-                  name: `${cSym} (5x Vadeli)`,
+                  name: `${cSym} (Vadeli)`,
                   side: "BUY",
                   entryPrice: verifiedEntryPrice,
                   currentPrice: verifiedExitPrice,
@@ -264,6 +271,7 @@ export async function GET(request: NextRequest) {
                   pnlPercent: verifiedPnlPercent,
                   openedAt: new Date(incTime - 3600000).toLocaleTimeString("tr-TR"),
                   openedTimestamp: incTime - 3600000,
+                  openTimeEstimated: true,
                   status: "CLOSED",
                   closeReason: isProfit ? "Binance Global Kâr Satışı (Doğrulandı)" : "Binance Global Stop Loss (Doğrulandı)",
                   closedAt: new Date(incTime).toISOString(),
@@ -271,7 +279,7 @@ export async function GET(request: NextRequest) {
                   triggerType: "MANUAL",
                   orderType: "MARKET",
                   isFutures: true,
-                  leverage: 5,
+                  leverage: estLeverage,
                   exchange: "BINANCE_GLOBAL_FUTURES",
                 }
                 currentHist.unshift(newClosedPos)
@@ -437,9 +445,21 @@ export async function POST(request: NextRequest) {
     const authHeader = request.headers.get("authorization") || ""
     const isCronAuthorized = Boolean(cronSecret && (authHeader === `Bearer ${cronSecret}` || body?.secret === cronSecret))
     const hasValidGlobalCreds = Boolean(body?.binanceGlobal?.apiKey && body?.binanceGlobal?.apiSecret)
-    const isResetAuthorized = body?.resetKey === "reset_clean_slate"
+    // 🔒 GÜVENLİK (Seçenek A): "reset_clean_slate" anahtarı repo'da açık yazılıydı; bu anahtarı bilen
+    // herkes strateji/kaldıraç/bakiye değiştirebiliyor ya da botu kapatabiliyordu.
+    // Artık reset yolu YALNIZCA panelden (aynı köken) VE geçerli oturum çerezi varken geçerlidir.
+    // (Cross-site CSRF istekleri "sec-fetch-site: cross-site" ile, dış istemciler ise oturumsuz gelir.)
+    const secFetchSite = request.headers.get("sec-fetch-site") || ""
+    const referer = request.headers.get("referer") || ""
+    const isSameOrigin = secFetchSite === "same-origin" || referer.includes("frborsam.vercel.app") || referer.includes("localhost")
+    const hasSession = Boolean(sessionCookie && sessionCookie.length > 0)
+    const isResetAuthorized = body?.resetKey === "reset_clean_slate" && isSameOrigin && hasSession
     if (!isOwner && !hasValidGlobalCreds && !isCronAuthorized && !isResetAuthorized) {
+      console.warn(`🚨 [YETKİSİZ STATE POST] ip=${ip} resetKey=${body?.resetKey ? "var" : "yok"} sameOrigin=${isSameOrigin} oturum=${hasSession}`)
       return NextResponse.json({ ok: false, error: "Yetkisiz işlem! Yönetici girişi gereklidir." }, { status: 403 })
+    }
+    if (isResetAuthorized && !isOwner) {
+      console.warn(`⚠️ [RESET ANAHTARI KULLANILDI] ip=${ip} — panel oturumu ile state sıfırlama yapıldı.`)
     }
 
     const updates: string[] = []

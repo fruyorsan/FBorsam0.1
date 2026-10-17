@@ -111,7 +111,10 @@ function push(agg: Agg, p: Position, closedTs: number) {
     agg.pnlPercentCount++
   }
 
-  if (p.openedTimestamp && closedTs > p.openedTimestamp) {
+  // ⚠️ Tutma süresi: borsa senkronu kayıtlarında açılış zamanı UYDURMA (kapanış-1 saat) olduğu
+  // için bunlar ortalamaya DAHİL EDİLMEZ; aksi halde "ortalama tutma süresi" hep 1 saat çıkıyordu.
+  const openEstimated = (p as any).openTimeEstimated === true || String((p as any).id || "").startsWith("futures-income-")
+  if (!openEstimated && p.openedTimestamp && closedTs > p.openedTimestamp) {
     const hours = (closedTs - p.openedTimestamp) / (1000 * 60 * 60)
     if (hours >= 0 && hours < 24 * 30) {
       agg.holdHoursSum += hours
@@ -208,6 +211,31 @@ export async function GET(request: NextRequest) {
         summary: null,
       })
     }
+
+    // 🧹 MÜKERRER TEMİZLİĞİ (geçmiş veri dahil):
+    // Aynı kapanış iki yazıcıdan (kural-bazlı + borsa senkronu) kaydedildiği için geçmişte
+    // çift kayıtlar var; bu, isabet oranını ve kâr faktörünü bozuyordu. Aynı sembol + aynı
+    // market + ±60 sn içindeki kayıtlar tek sayılır ve borsadan DOĞRULANMIŞ kayıt tercih edilir.
+    const isVerifiedRec = (p: any) => String(p?.id || "").startsWith("futures-income-")
+    const dedupedTrades: typeof trades = []
+    let duplicatesRemoved = 0
+    for (const t of trades) {
+      const sym = String(t.p.symbol || "").toUpperCase()
+      const dupIdx = dedupedTrades.findIndex((d) => {
+        if (String(d.p.symbol || "").toUpperCase() !== sym) return false
+        if (d.isFutures !== t.isFutures) return false
+        return Math.abs(d.ts - t.ts) <= 60_000
+      })
+      if (dupIdx === -1) {
+        dedupedTrades.push(t)
+      } else {
+        duplicatesRemoved++
+        const ex = dedupedTrades[dupIdx]
+        if (isVerifiedRec(t.p) && !isVerifiedRec(ex.p)) dedupedTrades[dupIdx] = t
+      }
+    }
+    trades.length = 0
+    trades.push(...dedupedTrades)
 
     // ── 1. GENEL ÖZET ──
     const summaryAgg = newAgg()
@@ -353,6 +381,7 @@ export async function GET(request: NextRequest) {
       generatedAt: new Date().toISOString(),
       filters: { days: days || "all", market, source },
       coverageNote: "Redis history son 500 kapanışı tutar; daha eski işlemler kapsam dışıdır.",
+      duplicatesRemoved,
       summary: summaryOut,
       byExitBucket,
       byEntrySignal,

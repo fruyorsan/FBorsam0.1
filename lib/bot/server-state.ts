@@ -356,6 +356,37 @@ export async function getServerHistory(): Promise<Position[]> { return get<Posit
 export async function setServerHistory(v: Position[]) { await set(K.history, v) }
 export async function appendServerHistory(pos: Position) {
   const h = await getServerHistory()
+
+  // 🔁 MÜKERRER KAYIT KALKANI (iki yazıcı problemi):
+  // Kapanışlar iki ayrı yerden yazılıyor: (a) cron'un kural-bazlı kapanışı, (b) Binance income
+  // senkronundan gelen DOĞRULANMIŞ kayıt. İkisi birbirinden habersiz olduğu için aynı kapanış
+  // geçmişe İKİ KEZ giriyordu (TIA/HYPE kayıtları 0.4-1 sn arayla çiftlenmişti) ve isabet/PF
+  // istatistikleri bozuluyordu. Burada aynı sembol + aynı futures/spot + ±60 sn içindeki
+  // kayıtlar birleştirilir ve borsadan DOĞRULANMIŞ (id: futures-income-*) kayıt tercih edilir.
+  const isVerifiedRec = (x: any) => String(x?.id || "").startsWith("futures-income-")
+  const tsOfRec = (x: any) => Number(x?.closedTimestamp) || (x?.closedAt ? new Date(x.closedAt).getTime() : 0)
+  const newTs = tsOfRec(pos)
+  const sym = String(pos.symbol || "").toUpperCase()
+  const newIsFutures = Boolean((pos as any).isFutures)
+
+  for (let i = 0; i < h.length; i++) {
+    const ex: any = h[i]
+    if (String(ex.symbol || "").toUpperCase() !== sym) continue
+    if (Boolean(ex.isFutures) !== newIsFutures) continue
+    if (ex.id && pos.id && ex.id === pos.id) return // tam aynı kayıt → hiç yazma
+    const exTs = tsOfRec(ex)
+    if (!exTs || !newTs || Math.abs(exTs - newTs) > 60_000) continue
+
+    if (isVerifiedRec(ex) && !isVerifiedRec(pos)) return // doğrulanmış kayıt korunur, mükerrer yazılmaz
+    if (!isVerifiedRec(ex) && isVerifiedRec(pos)) {
+      // Kural-bazlı kayıt varsa, borsadan doğrulanmış gerçek verilerle GÜNCELLE (kopya ekleme)
+      const next = [...h]
+      next[i] = { ...ex, ...(pos as any), openedTimestamp: (ex as any).openedTimestamp || (pos as any).openedTimestamp, openedAt: (ex as any).openedAt || (pos as any).openedAt }
+      await set(K.history, next.slice(0, 500))
+      return
+    }
+  }
+
   await set(K.history, [pos, ...h].slice(0, 500))
 }
 export async function getServerLogs(): Promise<TradeLog[]> { return get<TradeLog[]>(K.logs, []) }
