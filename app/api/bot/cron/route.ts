@@ -56,6 +56,7 @@ import {
   setL2PublicCache,
   getDynamicUnlockVetoes,
   getServerInitialBalance,
+  redisCmd,
 } from "@/lib/bot/server-state"
 import {
   getBotRiskConfig,
@@ -4635,6 +4636,61 @@ export async function GET(_request: NextRequest) {
       }
     } catch (ipoErr: any) {
       console.warn(logPrefix, "Halka arz radarı kontrol hatası:", ipoErr.message)
+    }
+
+    // ── 📆 GÜNLÜK DRY_RUN KARNESİ (Telegram hatırlatıcısı) ──
+    // DRY_RUN simülasyonu aktifken günde BİR KEZ, bugün (TR saati) kapanan
+    // işlemlerin karne özetini Telegram'a atar: işlem sayısı / isabet / net TL.
+    // Amaç: "2-3 gün sonra karneye bak" hatırlatmasını botun kendisi yapar;
+    // canlıya dönüş kararı için ölçüt: isabet ≥ %46 ve net pozitif.
+    try {
+      if (botRisk.dryRun) {
+        const karneDay = new Date().toLocaleDateString("en-CA", { timeZone: "Europe/Istanbul" }) // YYYY-MM-DD (TR)
+        const karneFlag = await redisCmd("GET", `bot:dryrun:karne:${karneDay}`)
+        if (!karneFlag) {
+          await redisCmd("SET", `bot:dryrun:karne:${karneDay}`, "1", "EX", 129600) // 36 saat tolerans
+          const allHist = await getServerHistory()
+          const todayCloses = allHist.filter((p: Position) => {
+            if (p.status !== "CLOSED") return false
+            const ts = p.closedTimestamp || (p.closedAt ? new Date(p.closedAt).getTime() : 0)
+            if (!ts) return false
+            return new Date(ts).toLocaleDateString("en-CA", { timeZone: "Europe/Istanbul" }) === karneDay
+          })
+          let karneWins = 0
+          let karneLosses = 0
+          let karneNetTry = 0
+          let simCount = 0
+          for (const t of todayCloses) {
+            const net = typeof t.netPnlTry === "number" ? t.netPnlTry : t.pnl ?? 0
+            if (net > 0) karneWins++
+            else if (net < 0) karneLosses++
+            karneNetTry += net
+            if (!t.isRealOrder) simCount++
+          }
+          const karneTotal = todayCloses.length
+          const karneWr = karneTotal > 0 ? Math.round((karneWins / karneTotal) * 100) : null
+          const karneNetStr = `${karneNetTry >= 0 ? "+" : "-"}${Math.abs(karneNetTry).toFixed(2)} TL`
+          const karneMsg =
+            `📆 <b>DRY_RUN GÜNLÜK KARNE</b> — ${karneDay} (TR)\n` +
+            `• Kapanan işlem: ${karneTotal}` +
+            (karneTotal > 0 ? ` (kazanç ${karneWins} / zarar ${karneLosses} — isabet %${karneWr})\n` : "\n") +
+            `• Net: ${karneNetStr}` +
+            (simCount > 0 ? ` — bunlardan ${simCount} tanesi SİMÜLASYON (gerçek emir yok)` : "") +
+            `\n• 🛡️ Gerçek emir gönderilmiyor, cüzdan etkilenmiyor.\n` +
+            `• ⏰ Hatırlatma: canlıya (DRY_RUN=false) ancak isabet ≥ %46 <b>ve</b> net pozitife geçince dönülecek. Karar için 2-3 gün veri birikmesi hedef.` +
+            (karneTotal === 0 ? `\n• Bugün kapanış yok — olabilir: BTC rejimi kapalı / FOMO engeli / slot dolu iken bot bekler. Bu da bir veri noktası.` : "")
+          const karneRes = await sendTelegramMessage(karneMsg)
+          console.log(
+            logPrefix,
+            karneRes.ok
+              ? `📆 [DRY_RUN KARNESİ GÖNDERİLDİ] ${karneTotal} işlem, net ${karneNetStr}`
+              : `📆 [DRY_RUN KARNESİ GÖNDERİLEMEDİ] ${karneRes.error || "bilinmeyen hata"} (Telegram config eksik olabilir)`
+          )
+          executedActions.push(`DRY_RUN_KARNE: ${karneTotal} işlem, ${karneNetStr}`)
+        }
+      }
+    } catch (karneErr: any) {
+      console.warn(logPrefix, "DRY_RUN karne hatası:", karneErr?.message)
     }
 
     const finalPositions = await getServerPositions()

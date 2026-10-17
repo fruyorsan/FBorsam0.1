@@ -15,7 +15,7 @@ let _quotaBlockedUntil = 0 // Kota dolduğunda Redis'i darlamayı durduran kalka
 let _lastRedisError: any = null
 let _lastRedisOp: any = null
 
-async function redisCmd(...args: (string | number)[]): Promise<any> {
+export async function redisCmd(...args: (string | number)[]): Promise<any> {
   const now = Date.now()
   const cmd = String(args[0] || "").toUpperCase()
   if (cmd === "DEL") {
