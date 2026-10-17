@@ -28,18 +28,6 @@ const PaperbotTerminal = dynamic(
   }
 )
 
-const AutomationTerminal2 = dynamic(
-  () => import("@/components/automation/automation-terminal-2").then((m) => m.AutomationTerminal2),
-  {
-    loading: () => (
-      <div className="flex h-96 flex-col items-center justify-center gap-2 text-muted-foreground">
-        <Loader2 className="size-7 animate-spin text-primary" />
-        <span className="text-xs font-medium">Terminal yükleniyor...</span>
-      </div>
-    ),
-  }
-)
-
 const Bist30Terminal = dynamic(
   () => import("@/components/bist30/bist30-terminal").then((m) => m.Bist30Terminal),
   {
@@ -87,7 +75,7 @@ const chartConfig={price:{label:"Fiyat",color:"var(--chart-1)"},sma:{label:"HO 2
 const fetcher=(url:string)=>fetch(url).then(async r=>{const p=await r.json();if(!r.ok)throw new Error(p.error);return p})
 const fmt=(v?:number)=>Number.isFinite(v)?v!.toLocaleString("tr-TR",{minimumFractionDigits:Math.abs(v!)<0.0001?8:Math.abs(v!)<1?4:2,maximumFractionDigits:Math.abs(v!)<0.0001?8:Math.abs(v!)<1?6:2}):"—"
 type Asset={id?:string;symbol:string;name:string;market:"BIST"|"ABD"|"Kripto";rank?:number|null;image?:string|null};type Quote={symbol:string;name:string;price?:number;change?:number;ok:boolean};type News={title:string;source:string;url?:string;publishedAt?:string};type Advice={key:string;label:string;signal:Signal;confidence:number;action:string;invalidation:number;target:number};type Distribution={buy:number;hold:number;sell:number;total:number};type Analyst={rating?:string;score?:number;targetLow?:number;targetMean?:number;targetHigh?:number;analystCount?:number;distribution?:Distribution|null};type Technical={signal:Signal;confidence:number;support:number;resistance:number;values:Record<string,number>;fibonacci:Record<string,number>;breakdown:IndicatorRead[];chart:{date:string;price:number;open?:number;high?:number;low?:number;close?:number;volume?:number;sma?:number}[]};type Data={symbol:string;name:string;market:string;currency:string;price:number;change:number;updatedAt:string;source:string;technical:Technical;advice:Advice[];news:News[];analyst?:Analyst}
-type View="terminal"|"paperbot"|"automation2"|"news"|"bist30"|"cryptoScanner";type Rules={support:boolean;resistance:boolean;signal:boolean;news:boolean}
+type View="terminal"|"paperbot"|"news"|"bist30"|"cryptoScanner";type Rules={support:boolean;resistance:boolean;signal:boolean;news:boolean}
 const verdictText={pos:"text-positive",neg:"text-negative",neutral:"text-warning"} as const
 function Change({value=0}:{value?:number}){return <span className={cn("inline-flex items-center gap-1 font-mono text-xs font-semibold",value>=0?"text-positive":"text-negative")}>{value>=0?<TrendingUp/>:<TrendingDown/>}{value>=0?"+":""}{fmt(value)}%</span>}
 function SignalBadge({signal}:{signal:Signal}){return <Badge variant="outline" className={cn("font-mono",signal.includes("AL")?"border-positive/40 bg-positive/10 text-positive":signal.includes("SAT")?"border-negative/40 bg-negative/10 text-negative":"border-warning/40 bg-warning/10 text-warning")}>{signal}</Badge>}
@@ -159,9 +147,10 @@ export function FinanceDashboard(){
       else if(window.location.hash==="#bist30"||window.location.hash==="#bist")setView("bist30")
       else if(window.location.hash==="#crypto"||window.location.hash==="#kripto"||window.location.hash==="#cryptoscanner")setView("cryptoScanner")
       else {
-        const saved=localStorage.getItem("piyasaiq:last_view")as View
+        const saved=localStorage.getItem("piyasaiq:last_view")
+        // Eski "automation2" görünümü kaldırıldı → "Otomasyon"a yönlendir
         if(saved==="automation2") setView("paperbot")
-        else if(saved==="paperbot"||saved==="news"||saved==="terminal"||saved==="bist30"||saved==="cryptoScanner")setView(saved)
+        else if(saved==="paperbot"||saved==="news"||saved==="terminal"||saved==="bist30"||saved==="cryptoScanner")setView(saved as View)
       }
     }catch{}
     const handleHash=()=>{
@@ -318,7 +307,7 @@ export function FinanceDashboard(){
         </div>
       </header>
       <div className="finance-grid relative z-10 flex flex-col gap-3 p-3 lg:p-4">
-    {view==="cryptoScanner"?<CryptoScannerTerminal onSelectInTerminal={(sym)=>{setSelected(sym);setView("terminal")}} onBack={()=>setView("terminal")}/>:view==="bist30"?<Bist30Terminal onSelectInTerminal={(sym)=>{setSelected(sym);setView("terminal")}} onBack={()=>setView("terminal")}/>:view==="news"?<NewsCenter news={globalNews?.news??[]} quotes={quotes} barometer={globalNews?.barometer} onRefresh={()=>refreshNews()} onBack={()=>setView("terminal")}/>:view==="paperbot"?<PaperbotTerminal onBack={()=>setView("terminal")}/>:view==="automation2"?<AutomationTerminal2 onBack={()=>setView("terminal")}/>:<>
+    {view==="cryptoScanner"?<CryptoScannerTerminal onSelectInTerminal={(sym)=>{setSelected(sym);setView("terminal")}} onBack={()=>setView("terminal")}/>:view==="bist30"?<Bist30Terminal onSelectInTerminal={(sym)=>{setSelected(sym);setView("terminal")}} onBack={()=>setView("terminal")}/>:view==="news"?<NewsCenter news={globalNews?.news??[]} quotes={quotes} barometer={globalNews?.barometer} onRefresh={()=>refreshNews()} onBack={()=>setView("terminal")}/>:view==="paperbot"?<PaperbotTerminal onBack={()=>setView("terminal")}/>:<>
     {/* 🤖 OTOMASYON & TOTAL KAZANÇ ÜST BANNERI */}
     <div
       onClick={() => setView("paperbot")}

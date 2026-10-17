@@ -4203,6 +4203,44 @@ export async function GET(_request: NextRequest) {
                   (scoredCandidates.length > 0 ? ` En iyi: ${scoredCandidates.slice(0, 3).map((s) => `${s.candSym}=${s.score}`).join(", ")}` : "")
               )
 
+              // 🔍 TEŞHİS: Hiç aday geçmediğinde "neden" sorusunu loga yaz.
+              // (Vercel loglarında tek bakışta görülsün diye insan-okur özet.)
+              if (scoredCandidates.length === 0 && Object.keys(rejectionReasons).length > 0) {
+                const humanizeRejection = (r: string): string => {
+                  if (r.startsWith("low_score")) return "trend/hacim skoru eşiğin altında"
+                  if (r === "sfp_not_detected") return "SFP fitili/süpürmesi yok"
+                  if (r === "sfp_no_liq") return "likidasyon teyidi yok"
+                  if (r.startsWith("sfp_rsi")) return "SFP+RSI uygun değil"
+                  if (r.startsWith("sfp_taker")) return "SFP+taker alıcı baskısı yok"
+                  if (r === "below_sma20") return "fiyat SMA20 altında"
+                  if (r.startsWith("rsi_")) return "RSI 44-66 dışında"
+                  if (r.startsWith("bollinger_top")) return "bollinger tepesinde"
+                  if (r === "upper_wick_5m_rejection") return "5m üst fitil reddi"
+                  if (r.startsWith("fomo")) return "5m ani pompa (FOMO)"
+                  if (r.startsWith("taker_")) return "taker alıcı baskısı zayıf"
+                  if (r.startsWith("no_align")) return "RSI/taker hizalanmadı"
+                  if (r.startsWith("obi_")) return "emir defteri baskısı ters"
+                  if (r === "institutional_short") return "kurumsal short baskısı"
+                  if (r.startsWith("high_funding") || r.startsWith("funding_")) return "funding uygun değil"
+                  if (r.startsWith("spread")) return "spread geniş"
+                  if (r.startsWith("depth")) return "derinlik yetersiz"
+                  if (r.startsWith("rs_")) return "göreli güç zayıf"
+                  if (r.startsWith("kline")) return "borsa mum verisi eksik/hatalı"
+                  if (r.startsWith("err_")) return "hesaplama hatası"
+                  return r
+                }
+                const grouped: Record<string, number> = {}
+                for (const sym of Object.keys(rejectionReasons)) {
+                  const key = humanizeRejection(rejectionReasons[sym] || "bilinmeyen")
+                  grouped[key] = (grouped[key] || 0) + 1
+                }
+                const summary = Object.entries(grouped)
+                  .sort((a, b) => b[1] - a[1])
+                  .map(([k, v]) => `${k}: ${v}`)
+                  .join(" | ")
+                console.log(logPrefix, `🔍 [GİRİŞ ENGELLERİ] ${candidatesToScan.length} aday → ${summary}`)
+              }
+
               // 🧠 xAI GROK KANTİTATİF VE DUYGU TEYİT KATMANI:
               // Teknik puanı geçen en güçlü en iyi 8 aday paralel olarak Grok Veto ve duygu analizinden geçirilir.
               const topCandidates = scoredCandidates.slice(0, 8)
@@ -4294,11 +4332,23 @@ export async function GET(_request: NextRequest) {
                     const btcLastClose = btcCloses[btcCloses.length - 1]
                     const btcRefClose = btcCloses[btcCloses.length - 25]
                     const btc24hChg = btcRefClose > 0 ? ((btcLastClose - btcRefClose) / btcRefClose) * 100 : 0
-                    if (btcLastClose < btcEma20 * 0.999 && btc24hChg < 0) {
+                    // 🔧 EŞİK AYARI: %0.1'lik sapma "kırmızı rejim" sayılırsa filtre sürekli
+                    // kapalı kalır ve bot hiç işlem yapmaz (ölçüm de imkânsız olur). Bu yüzden
+                    // anlamlı bir bozulma aranır: BTC 1h kapanışı EMA20'nin en az %0.5 altı
+                    // VE 24h değişim en az -%1.0. Aradaki "gürültü bandı" işlem engellemez.
+                    const btcBelowEmaPct = ((btcLastClose - btcEma20) / btcEma20) * 100
+                    if (btcBelowEmaPct <= -0.5 && btc24hChg <= -1.0) {
                       btcRegimeOk = false
                       console.log(
                         logPrefix,
-                        `📉 [BTC TREND REJİMİ KAPALI] BTC 1h kapanışı EMA20'nin %${(((btcLastClose - btcEma20) / btcEma20) * 100).toFixed(2)} altında ve 24h değişim %${btc24hChg.toFixed(2)}. Bu turda YENİ vadeli long açılmayacak (mevcut pozisyonlar kendi kurallarıyla yönetilmeye devam eder).`
+                        `📉 [BTC TREND REJİMİ KAPALI] BTC 1h kapanışı EMA20'nin %${btcBelowEmaPct.toFixed(2)} altında ve 24h değişim %${btc24hChg.toFixed(2)}. Bu turda YENİ vadeli long açılmayacak (mevcut pozisyonlar kendi kurallarıyla yönetilmeye devam eder).`
+                      )
+                    } else {
+                      // Teşhis görünürlüğü: rejim açıkken de tek satır bas (kullanıcı neden
+                      // işlem olduğunu/olmadığını logdan görebilsin).
+                      console.log(
+                        logPrefix,
+                        `📈 [BTC TREND REJİMİ AÇIK] BTC 1h kapanışı EMA20'ye göre %${btcBelowEmaPct >= 0 ? "+" : ""}${btcBelowEmaPct.toFixed(2)}, 24h %${btc24hChg >= 0 ? "+" : ""}${btc24hChg.toFixed(2)} — yeni long girişleri serbest.`
                       )
                     }
                   }
