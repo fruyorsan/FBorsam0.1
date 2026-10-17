@@ -341,16 +341,25 @@ export async function GET(_request: NextRequest) {
   const sessionCookie = _request.cookies.get("f_borsam_session")?.value
   const hasSession = Boolean(sessionCookie && sessionCookie.length > 0)
 
-  const isAuthorized =
-    (cronSecret && authHeader === `Bearer ${cronSecret}`) ||
-    authHeader === "Bearer reset_clean_slate" ||
-    isSameOrigin ||
-    hasSession
+  const secretMatched = Boolean(cronSecret && authHeader === `Bearer ${cronSecret}`)
+
+  // 🔒 GÜVENLİK: Sabit/varsayılan bir anahtar ("Bearer reset_clean_slate" gibi) KALDIRILDI.
+  // Yalnızca (a) gerçek gizli anahtar, (b) panelin aynı-köken çağrısı, (c) geçerli oturum çerezi geçer.
+  const isAuthorized = secretMatched || isSameOrigin || hasSession
 
   if (!isAuthorized) {
     console.warn(logPrefix, "🚨 [YETKİSİZ CRON ÇAĞRISI] CRON_SECRET eksik veya geçersiz Authorization başlığı!")
     return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 })
   }
+
+  // 🧭 TETİKLEYİCİ TEŞHİSİ: "Botu kim çalıştırdı?" — panel açık mı, harici cron mu vuruyor?
+  // Harici servis (cron-job.org vb.) düzgün çalışıyorsa loglarda HARICI CRON satırları düzenli akar.
+  const triggerSource = secretMatched
+    ? "HARICI CRON (gizli anahtar eşleşti)"
+    : isSameOrigin
+      ? "PANEL (tarayıcı sekmesi)"
+      : "OTURUM ÇEREZİ"
+  console.log(logPrefix, `🚀 [TETİKLEYİCİ] ${triggerSource} → /api/bot/cron çağrısı alındı.`)
 
   // 🛑 KILL_SWITCH KONTROLÜ:
   // Eğer KILL_SWITCH aktifse hiçbir yeni işlem açılmaz; sadece açık pozisyonlar ve stoplar korunur.
