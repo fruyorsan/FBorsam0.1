@@ -57,6 +57,8 @@ import {
   getDynamicUnlockVetoes,
   getServerInitialBalance,
   redisCmd,
+  getDryRunPositions,
+  setDryRunPositions,
 } from "@/lib/bot/server-state"
 import {
   getBotRiskConfig,
@@ -355,6 +357,12 @@ export async function GET(_request: NextRequest) {
   if (botRisk.killSwitchActive) {
     console.warn(logPrefix, `🛑 [KILL_SWITCH AKTİF] ${botRisk.killSwitchReason || "Acil durdurma devrede"}. Tüm yeni emirler durduruldu!`)
   }
+
+  // 🧪 GLOBAL DRY-RUN BAYRAĞI (fail-closed): DRY_RUN "false" DEĞİLSE veya
+  // BINANCE_ENV "live"/"production" değilse → Hiçbir canlı emir gönderilmez.
+  // Bu bayrak; spot alım/satım, vadeli pozisyon yönetimi ve stop güncellemelerinin
+  // TAMAMINI kapsar (eskiden yalnızca yeni vadeli girişleri kapsıyordu).
+  const isDryRunActive = botRisk.dryRun || botRisk.binanceEnv !== "live"
 
   const isSnipeMode = _request.nextUrl?.searchParams?.get("snipe") === "1"
   const snipeExchange = _request.nextUrl?.searchParams?.get("exchange") || ""
@@ -950,6 +958,39 @@ export async function GET(_request: NextRequest) {
           const formattedQty = parseFloat(formatWithStepSize(pos.amount, stepSize, filters?.basePrecision || 8))
 
           if (formattedQty >= minQty) {
+            // 🧪 DRY-RUN SERT KİLİT: gerçek spot satış YOK — sanal kapanış + geçmişe kayıt.
+            if (isDryRunActive) {
+              const totalPnlTrySim = (pos.partialSold ? (pos.partialSoldPnl || 0) : 0) + currentPnlTry
+              const fullAmountSim = (pos.amount || 0) + (pos.partialSold ? (pos.partialSoldAmount || 0) : 0)
+              const initialInvestedSim = pos.initialTotalTry || (fullAmountSim * pos.entryPrice)
+              const simClosedPos: Position = {
+                ...pos,
+                status: "CLOSED",
+                currentPrice,
+                closePrice: currentPrice,
+                highestPrice,
+                amount: fullAmountSim,
+                totalTry: initialInvestedSim,
+                pnl: totalPnlTrySim,
+                netPnlTry: totalPnlTrySim,
+                pnlPercent: initialInvestedSim > 0 ? (totalPnlTrySim / initialInvestedSim) * 100 : pnlPercent,
+                closeReason: `🧪 [SİM] ${reason}`,
+                closedAt: new Date().toISOString(),
+                closedTimestamp: Date.now(),
+                isRealOrder: false,
+              }
+              await appendServerHistory(simClosedPos).catch(() => {})
+              await appendServerLog({
+                id: `log-sim-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+                time: new Date().toLocaleTimeString("tr-TR"),
+                type: "SELL",
+                symbol: pos.symbol,
+                message: `🧪 [DRY_RUN SİMÜLE SATIŞ] ${pos.symbol} sanal kapatıldı (gerçek emir YOK). Sebep: ${reason} | PnL: ${totalPnlTrySim.toFixed(2)} TL`,
+              }).catch(() => {})
+              executedActions.push(`DRY_RUN_EXIT: ${pos.symbol}`)
+              continue
+            }
+
             const sellRes = await executeBinanceTrSpotOrder({
               symbol: pairTr,
               side: "SELL",
@@ -1171,15 +1212,19 @@ export async function GET(_request: NextRequest) {
             const formattedHalfQty = parseFloat(formatWithStepSize(halfAmount, stepSize, filters?.basePrecision || 8))
 
             if (formattedHalfQty >= minQty) {
-              const sellRes = await executeBinanceTrSpotOrder({
-                symbol: pairTr,
-                side: "SELL",
-                type: "MARKET",
-                quantity: formattedHalfQty,
-                isPartial: true,
-                apiKey,
-                apiSecret,
-              })
+              // 🧪 DRY-RUN: kademeli satışta gerçek emir gönderilmez; sanal "FILLED"
+              // yanıtı ile aşağıdaki state/kâr kilidi akışı simüle edilir.
+              const sellRes = isDryRunActive
+                ? ({ ok: true, sim: true, orderId: `sim-${Date.now()}`, status: "FILLED", executedQty: formattedHalfQty, cummulativeQuoteQty: formattedHalfQty * currentPrice, avgPrice: currentPrice } as any)
+                : await executeBinanceTrSpotOrder({
+                    symbol: pairTr,
+                    side: "SELL",
+                    type: "MARKET",
+                    quantity: formattedHalfQty,
+                    isPartial: true,
+                    apiKey,
+                    apiSecret,
+                  })
 
               if (sellRes.ok) {
                 const gainedTry = (formattedHalfQty * currentPrice) - (formattedHalfQty * pos.entryPrice)
@@ -2078,6 +2123,32 @@ export async function GET(_request: NextRequest) {
           }
 
           // ğŸ¯ BEST BID LÄ°MÄ°T ALIM EMRÄ°:
+          // 🧪 DRY-RUN SERT KİLİT: gerçek spot alım emri GÖNDERİLMEZ.
+          if (isDryRunActive) {
+            const simSpotTrade = {
+              symbol: candidate.symbol,
+              pair: trPair,
+              side: "BUY" as const,
+              price: parseFloat(formattedLimitPrice),
+              quantity: parseFloat(formattedQty),
+              costTry: buyAmountTry,
+              reason: `🧪 DRY_RUN SIM SPOT LIMIT ALIM (${candidate.symbol})`,
+              createdAt: Date.now(),
+              market: "BINANCE_TR_SPOT",
+            }
+            console.log(logPrefix, `🧪 [DRY_RUN AKTİF] Gerçek spot emri gönderilmedi! Simüle Limit Alım: ${trPair} | Fiyat: ${formattedLimitPrice} | Adet: ${formattedQty} | Tutar: ${buyAmountTry.toFixed(2)} TL`)
+            await appendDryRunTradeToRedis(simSpotTrade).catch(() => {})
+            await appendServerLog({
+              id: `log-sim-buy-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+              time: new Date().toLocaleTimeString("tr-TR"),
+              type: "BUY",
+              symbol: candidate.symbol,
+              message: `🧪 [DRY_RUN SİMÜLE SPOT ALIM] ${trPair} | Fiyat: ${formattedLimitPrice} | Tutar: ${buyAmountTry.toFixed(2)} TL (gerçek emir YOK)`,
+            }).catch(() => {})
+            executedActions.push(`DRY_RUN_SPOT_ENTRY: ${candidate.symbol}`)
+            continue
+          }
+
           const buyRes = await executeBinanceTrSpotOrder({
             symbol: trPair,
             side: "BUY",
@@ -2260,7 +2331,7 @@ export async function GET(_request: NextRequest) {
             openPositions: openFuturesPos.length,
             message: openFuturesPos.length > 0
               ? `${openFuturesPos.length} aktif pozisyon (${openFuturesPos.map((p) => `${p.symbol} ${p.leverage}x`).join(", ")})`
-              : `${availUsdt.toFixed(2)} USDT ile 5x kaldıraçlı fırsat taranıyor`,
+              : `${availUsdt.toFixed(2)} USDT ile ${Math.min(3, exchangeSettings?.leverage || 3)}x kaldıraçlı fırsat taranıyor`,
           }
           const leverage = exchangeSettings?.leverage || 5
           const targetSlPct = 3.50 // Binance TR ile birebir aynı: -%3.50 geniş swing stop (eski %1.8 dar stop gürültüde patlatıyordu)
@@ -2396,6 +2467,13 @@ export async function GET(_request: NextRequest) {
           for (const fPos of openFuturesPos) {
             const sym = fPos.symbol
             const cleanSym = sym.replace(/USDT$/i, "").toUpperCase()
+
+            // 🧪 DRY-RUN SERT KİLİT: gerçek borsa pozisyonlarına HİÇ dokunulmaz
+            // (kapatma / stop yükseltme / self-healing stop emri GÖNDERİLMEZ).
+            if (isDryRunActive) {
+              console.log(logPrefix, `🧪 [DRY_RUN] ${sym} gerçek pozisyon yönetimi atlandı — gerçek emir gönderilmiyor.`)
+              continue
+            }
 
             // 🛡️ KULLANICI MANUEL POZİSYON KORUMASI:
             // Kullanıcı mobilden/uygulamadan elle işlem açtığında bot o pozisyona dokunmaz.
@@ -4406,6 +4484,11 @@ export async function GET(_request: NextRequest) {
                       // Aksi halde canlı API anahtarlarıyla gerçek emir gönderilir!
                       const isExplicitDryRun = botRisk.dryRun || botRisk.binanceEnv !== "live"
                       if (isExplicitDryRun) {
+                        // 📊 Canlı giriş yoluyla AYNI TP formülleri (ölçüm adil olsun):
+                        const simBaseTp1 = isCandMeme ? 7.00 : isCandMajor ? 5.00 : 5.60
+                        const simTp1Pct = Math.max(simBaseTp1, Number((dynamicSlPct * 1.60).toFixed(2)))
+                        const simBaseTp2 = isCandMeme ? 15.00 : isCandMajor ? 9.00 : 11.00
+                        const simTp2Pct = Math.max(simBaseTp2, Number((dynamicSlPct * 2.50).toFixed(2)))
                         const dryTrade = {
                           symbol: candSym,
                           side: "BUY" as const,
@@ -4414,11 +4497,38 @@ export async function GET(_request: NextRequest) {
                           notionalUsdt,
                           leverage: targetLeverage,
                           stopLossPrice,
+                          tp1Pct: simTp1Pct,
+                          tp2Pct: simTp2Pct,
                           reason: `CoinGecko Ön Filtre + Teknik Sinyal (Skor: ${sel.score}) [${sel.smartMoneyRegime || "GENEL"}]`,
                         }
-                        console.log(logPrefix, `🧪 [DRY_RUN AKTİF] Gerçek emir gönderilmedi! Simüle Alım: ${candSym} ${targetLeverage}x | Fiyat: ${curPrice} | Adet: ${formattedQty} | Tutar: ${notionalUsdt.toFixed(2)} USDT | SL: ${stopLossPrice.toFixed(4)}`)
+                        console.log(logPrefix, `🧪 [DRY_RUN AKTİF] Gerçek emir gönderilmedi! Simüle Alım: ${candSym} ${targetLeverage}x | Fiyat: ${curPrice} | Adet: ${formattedQty} | Tutar: ${notionalUsdt.toFixed(2)} USDT | SL: ${stopLossPrice.toFixed(4)} | TP1: +%${simTp1Pct} | TP2: +%${simTp2Pct}`)
                         recordDryRunTrade(dryTrade)
                         await appendDryRunTradeToRedis(dryTrade).catch(() => {})
+                        // 🧪 SANAL POZİSYON AÇ: her cron turunda fiyatla takip edilip
+                        // SL/TP/trailing/zaman kurallarıyla SANAL kapatılacak (analytics beslenir).
+                        try {
+                          const simPositions = await getDryRunPositions()
+                          if (!simPositions.some((p: any) => p.symbol === candSym)) {
+                            simPositions.push({
+                              symbol: candSym,
+                              entryPrice: curPrice,
+                              quantity: formattedQty,
+                              notionalUsdt,
+                              leverage: targetLeverage,
+                              stopLossPrice,
+                              tp1Pct: simTp1Pct,
+                              tp2Pct: simTp2Pct,
+                              peakPrice: curPrice,
+                              tp1Taken: false,
+                              openedTimestamp: Date.now(),
+                              openedAt: new Date().toISOString(),
+                              reason: dryTrade.reason,
+                            })
+                            await setDryRunPositions(simPositions)
+                          }
+                        } catch (simErr: any) {
+                          console.warn(logPrefix, `⚠️ [DRY_RUN] Sanal pozisyon kaydı başarısız: ${simErr?.message}`)
+                        }
                         if (sel.smartMoneyRegime) {
                           await setFuturesSmartMoneyRegime(candSym, sel.smartMoneyRegime, Boolean(sel.isShortCovering)).catch(() => {})
                         }
@@ -4553,7 +4663,7 @@ export async function GET(_request: NextRequest) {
                         if (sel.smartMoneyRegime) {
                           await setFuturesSmartMoneyRegime(candSym, sel.smartMoneyRegime, Boolean(sel.isShortCovering)).catch(() => {})
                         }
-                        const logMsg = `⚡ 🌐 [BINANCE GLOBAL POZİSYON AÇILDI] ${candSym} ${actualMargin.toFixed(2)}$ Marjin ile ${targetLeverage}x İzole Long pozisyonu açıldı! Borsa STOP_MARKET yerleştirildi (${stopLossTriggerPrice.toFixed(4)}$ -%${slPctDisplay}%). TP1: +%5.00, TP2: +%8.50. [${sel.smartMoneyRegime || "GENEL"}]`
+                        const logMsg = `⚡ 🌐 [BINANCE GLOBAL POZİSYON AÇILDI] ${candSym} ${actualMargin.toFixed(2)}$ Marjin ile ${targetLeverage}x İzole Long pozisyonu açıldı! Borsa STOP_MARKET yerleştirildi (${stopLossTriggerPrice.toFixed(4)}$ -%${slPctDisplay}%). TP1: +%${tp1PctDisplay}, TP2: +%${tp2PctDisplay}. [${sel.smartMoneyRegime || "GENEL"}]`
                         executedActions.push(`FUTURES_ENTRY: ${candSym}`)
                         if (isSnipeMode && !snipeResult) {
                           snipeResult = {
@@ -4636,6 +4746,125 @@ export async function GET(_request: NextRequest) {
       }
     } catch (ipoErr: any) {
       console.warn(logPrefix, "Halka arz radarı kontrol hatası:", ipoErr.message)
+    }
+
+    // ── 🧪 DRY_RUN SANAL POZİSYON SİMÜLATÖRÜ ──
+    // DRY_RUN aktifken açılan sanal vadeli pozisyonları her cron turunda mark-to-market eder.
+    // Canlı kurallarla AYNI mantık: SL / TP1 kâr kilidi (stop→başabaş) / TP2 hedef /
+    // trailing (zirveden %0.8 çekilme) / 48 saat zaman stopu. Tetiklenince SANAL kapatır
+    // ve kapanışı sunucu geçmişine yazar → /api/bot/analytics ölçebilir. Gerçek emir YOK.
+    try {
+      if (isDryRunActive) {
+        const simOpenPositions = await getDryRunPositions()
+        if (simOpenPositions.length > 0) {
+          const simUsdtRate = await getCronUsdtTryRate().catch(() => 0)
+          const simRemaining: any[] = []
+          for (const sp of simOpenPositions) {
+            const simSym = String(sp.symbol || "").toUpperCase()
+            if (!simSym) continue
+            let markPrice = 0
+            try {
+              const mpRes = await publicFetch(`${BINANCE_FUTURES_BASE}/fapi/v1/premiumIndex?symbol=${simSym}`, { cache: "no-store" })
+              if (mpRes.ok) {
+                const mp: any = await mpRes.json()
+                markPrice = parseFloat(mp?.markPrice || mp?.indexPrice || "0") || 0
+              }
+              if (!markPrice) {
+                const tpRes = await publicFetch(`${BINANCE_FUTURES_BASE}/fapi/v1/ticker/price?symbol=${simSym}`, { cache: "no-store" })
+                if (tpRes.ok) {
+                  const tp: any = await tpRes.json()
+                  markPrice = parseFloat(tp?.price || "0") || 0
+                }
+              }
+            } catch {}
+            const simEntry = Number(sp.entryPrice) || 0
+            const simQty = Number(sp.quantity) || 0
+            const simLev = Number(sp.leverage) || 1
+            const simStop = Number(sp.stopLossPrice) || 0
+            if (!markPrice || !simEntry || !simQty) {
+              simRemaining.push(sp)
+              continue
+            }
+            const simPriceGainPct = ((markPrice - simEntry) / simEntry) * 100
+            const simPeakPrice = Math.max(Number(sp.peakPrice) || simEntry, markPrice)
+            sp.peakPrice = simPeakPrice
+            const simPeakGainPct = ((simPeakPrice - simEntry) / simEntry) * 100
+            const simTp1 = Number(sp.tp1Pct) || 5.6
+            const simTp2 = Number(sp.tp2Pct) || 11
+            const simOpenHours = (Date.now() - (Number(sp.openedTimestamp) || Date.now())) / 3600000
+
+            let simCloseReason: string | null = null
+            if (simStop > 0 && markPrice <= simStop) {
+              simCloseReason = `🧪 [SİM] STOP-LOSS DEVREYE GİRDİ (${simPriceGainPct.toFixed(2)}%)`
+            } else if (simPriceGainPct >= simTp2) {
+              simCloseReason = `🧪 [SİM] HEDEF KÂR ALINDI (+%${simPriceGainPct.toFixed(2)})`
+            } else if (sp.tp1Taken && simPeakGainPct >= simTp1 && markPrice <= simPeakPrice * 0.992) {
+              simCloseReason = `🧪 [SİM] TRAILING KÂR KİLİTLENDİ (Zirve: +%${simPeakGainPct.toFixed(2)} → Çıkış: +%${simPriceGainPct.toFixed(2)})`
+            } else if (simOpenHours >= 48) {
+              simCloseReason = `🧪 [SİM] Time-Stop (48 saati aştı, ${simPriceGainPct.toFixed(2)}%)`
+            }
+
+            if (simCloseReason) {
+              const simPnlUsdt = simQty * (markPrice - simEntry)
+              const simNetTry = simUsdtRate > 0 ? simPnlUsdt * simUsdtRate : simPnlUsdt * 30
+              const simClosedPos: Position = {
+                id: `sim-${simSym}-${Date.now()}`,
+                symbol: simSym,
+                name: `${simSym} / USDT (SİM)`,
+                side: "BUY",
+                entryPrice: simEntry,
+                currentPrice: markPrice,
+                amount: simQty,
+                totalTry: simQty * simEntry * (simUsdtRate > 0 ? simUsdtRate : 30),
+                takeProfitPrice: formatSmartPrice(simEntry * (1 + simTp2 / 100)),
+                stopLossPrice: simStop,
+                highestPrice: simPeakPrice,
+                pnl: simPnlUsdt,
+                pnlPercent: Number(simPriceGainPct.toFixed(2)),
+                openedAt: String(sp.openedAt || new Date().toISOString()),
+                openedTimestamp: Number(sp.openedTimestamp) || Date.now(),
+                status: "CLOSED",
+                closePrice: markPrice,
+                exitPrice: markPrice,
+                closeReason: simCloseReason,
+                closedAt: new Date().toISOString(),
+                closedTimestamp: Date.now(),
+                triggerType: "AI_SUGGESTION",
+                orderType: "MARKET",
+                commissionTry: 0,
+                netPnlTry: simNetTry,
+                isRealOrder: false,
+                isFutures: true,
+                leverage: simLev,
+              } as Position
+              await appendServerHistory(simClosedPos).catch(() => {})
+              await appendServerLog({
+                id: `log-sim-exit-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+                time: new Date().toLocaleTimeString("tr-TR"),
+                type: simNetTry >= 0 ? "SELL" : "ALERT",
+                symbol: simSym,
+                message: `${simCloseReason} | Giriş: ${simEntry} → Çıkış: ${markPrice} | Net: ${simNetTry >= 0 ? "+" : ""}${simNetTry.toFixed(2)} TL (SİMÜLASYON — gerçek emir yok)`,
+              }).catch(() => {})
+              executedActions.push(`DRY_RUN_SIM_CLOSE: ${simSym}`)
+              console.log(logPrefix, `🧪 [SİM KAPANIŞ] ${simSym}: ${simCloseReason} | Net: ${simNetTry.toFixed(2)} TL`)
+            } else {
+              // TP1 kâr kilidi: zirve TP1'e ulaştıysa stop'u başabaşa (+komisyon) çek
+              if (!sp.tp1Taken && simPeakGainPct >= simTp1) {
+                sp.tp1Taken = true
+                sp.stopLossPrice = Math.max(simStop, simEntry * 1.0008)
+                console.log(logPrefix, `🧪 [SİM TP1] ${simSym} zirve +%${simPeakGainPct.toFixed(2)} → stop başabaşa çekildi (${sp.stopLossPrice.toFixed(6)})`)
+              }
+              simRemaining.push(sp)
+            }
+          }
+          await setDryRunPositions(simRemaining).catch(() => {})
+          if (simOpenPositions.length > 0) {
+            console.log(logPrefix, `🧪 [SİMÜLASYON] ${simOpenPositions.length} sanal pozisyon takip edildi, ${simRemaining.length} tanesi açık kaldı.`)
+          }
+        }
+      }
+    } catch (simLoopErr: any) {
+      console.warn(logPrefix, "DRY_RUN simülatör hatası:", simLoopErr?.message)
     }
 
     // ── 📆 GÜNLÜK DRY_RUN KARNESİ (Telegram hatırlatıcısı) ──

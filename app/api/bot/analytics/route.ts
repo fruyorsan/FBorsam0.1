@@ -167,6 +167,7 @@ export async function GET(request: NextRequest) {
     const daysParam = parseInt(url.searchParams.get("days") || "", 10)
     const days = isFinite(daysParam) && daysParam > 0 ? Math.min(daysParam, 90) : 0
     const market = (url.searchParams.get("market") || "all").toLowerCase() // all | spot | futures
+    const source = (url.searchParams.get("source") || "all").toLowerCase() // all | real | sim
 
     const history = await getServerHistory()
     if (!history || history.length === 0) {
@@ -187,6 +188,10 @@ export async function GET(request: NextRequest) {
       const isFutures = Boolean((p as any).isFutures)
       if (market === "futures" && !isFutures) continue
       if (market === "spot" && isFutures) continue
+      // 🧪 Kaynak ayrımı: isRealOrder === false → DRY_RUN simülasyon işlemi
+      const isSim = (p as any).isRealOrder === false
+      if (source === "sim" && !isSim) continue
+      if (source === "real" && isSim) continue
       trades.push({
         p,
         ts,
@@ -220,6 +225,9 @@ export async function GET(request: NextRequest) {
       count: summary.count,
       wins: summary.wins,
       losses: summary.losses,
+      // 🧪 Gerçek vs simülasyon ayrımı (kaynağı isRealOrder belirler)
+      realCount: trades.filter((t) => (t.p as any).isRealOrder !== false).length,
+      simCount: trades.filter((t) => (t.p as any).isRealOrder === false).length,
       winRatePct: Math.round((summary.wins / summary.count) * 1000) / 10,
       netPnlTry: Math.round(summary.netPnlTry * 100) / 100,
       avgPnlPercent: Math.round(summary.avgPnlPercent * 100) / 100,
@@ -343,7 +351,7 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({
       ok: true,
       generatedAt: new Date().toISOString(),
-      filters: { days: days || "all", market },
+      filters: { days: days || "all", market, source },
       coverageNote: "Redis history son 500 kapanışı tutar; daha eski işlemler kapsam dışıdır.",
       summary: summaryOut,
       byExitBucket,

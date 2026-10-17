@@ -967,6 +967,18 @@ export async function getDryRunTradesFromRedis(): Promise<any[]> {
   return get<any[]>("bot:dry_run_trades", [])
 }
 
+// 🧪 DRY RUN AÇIK SİMÜLE POZİSYONLAR (fiyat takibi + simüle kapanış için)
+// DRY_RUN açıkken gerçek pozisyon açılmaz; simüle pozisyonlar burada tutulur,
+// her cron turunda mark-to-market edilir ve SL/TP/trailing/time kurallarıyla
+// "sanal kapanış" yapılarak sunucu geçmişine yazılır (analytics bunu okur).
+export async function getDryRunPositions(): Promise<any[]> {
+  return get<any[]>("bot:dry_run_positions", [])
+}
+
+export async function setDryRunPositions(v: any[]): Promise<void> {
+  await set("bot:dry_run_positions", Array.isArray(v) ? v.slice(0, 200) : [])
+}
+
 // 🧠 xAI Grok Sosyal Duygu ve Haber Analizi Önbelleği
 export async function getCachedGrokSentiment(symbol: string): Promise<any | null> {
   return get<any | null>(`bot:grok_sentiment:${symbol.toUpperCase()}`, null)
