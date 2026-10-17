@@ -17,7 +17,6 @@ import {
   setServerTradeCooldown,
   getServerHistory,
   getServerStrategy,
-  setServerStrategy,
   getServerSlotConfig,
   isFuturesTp1Taken,
   setFuturesTp1Taken,
@@ -51,12 +50,12 @@ import {
   setCoinGeckoPrefilterState,
   appendDryRunTradeToRedis,
   getDailyLoss,
-  setDailyLoss,
   setSymbolCooldown,
   isSymbolInCooldown,
   getL2PublicCache,
   setL2PublicCache,
   getDynamicUnlockVetoes,
+  getServerInitialBalance,
 } from "@/lib/bot/server-state"
 import {
   getBotRiskConfig,
@@ -120,7 +119,6 @@ import {
   BINANCE_FUTURES_BASE,
   futuresProxyFetch,
 } from "@/lib/binance-helpers"
-import { DEFAULT_BOT_STRATEGY } from "@/lib/bot/engine"
 import { getMultiTimeframeAnalysis } from "@/lib/multi-timeframe"
 import {
   notifyTradeEntry,
@@ -372,30 +370,10 @@ export async function GET(_request: NextRequest) {
         timestamp,
       })
     }
-    // 0. STRATEJÄ° VE PARAMETRE SENKRONÄ°ZASYONU (Eski Scalp AyarlarÄ±nÄ± Swing AyarlarÄ±na GÃ¼ncelle):
-    try {
-      const currentStrat = await getServerStrategy()
-      if (
-        currentStrat.stalePositionTimeoutEnabled ||
-        !currentStrat.autoPilot ||
-        currentStrat.defaultTakeProfitPct < 5.0 ||
-        currentStrat.maxConcurrentPositions !== 2
-      ) {
-        await setServerStrategy({
-          ...DEFAULT_BOT_STRATEGY,
-          ...currentStrat,
-          autoPilot: true,
-          maxConcurrentPositions: 2,
-          defaultTakeProfitPct: 6.5,
-          defaultStopLossPct: 3.5,
-          stalePositionTimeoutEnabled: false,
-          stalePositionTimeoutHours: 72,
-          breakevenEnabled: false,
-          breakevenPct: 4.5,
-          trailingStopPct: 2.0,
-        })
-      }
-    } catch {}
+    // 📜 STRATEGY SYNC (PANEL OVERRIDE) KALDIRILDI:
+    // Bu blok her döngüde panelden girilen strateji ayarlarını (autoPilot, TP/SL, slot sayısı,
+    // zaman aşımı vb.) zorla DEFAULT değerlerine geri yazıyordu → paneldeki otomasyon ayarları
+    // sessizce eziliyordu. Artık Redis'teki ayarlara ve getServerActive() duraklatma bayrağına saygı duyulur.
 
     // 1. KULLANICI AKTİFLİK KONTROLÜ
     // 🛡️ SIFIR RİSK İLKESİ: Bot arayüzde duraklatılmış olsa BİLE, açıkta duran coinler (Spot & Vadeli)
@@ -428,13 +406,14 @@ export async function GET(_request: NextRequest) {
     const globSecret = binanceGlobal?.apiSecret?.trim() || ""
 
     // 3. MEVCUT CÃœZDAN, POZÄ°SYON VE CANLI FÄ°YATLAR (EÅŸzamanlÄ± Paralel Ã‡ekim - DÃ¼ÅŸÃ¼k Gecikme)
-    const [wallet, currentPositions, tickerRes] = await Promise.all([
+    const [wallet, currentPositions, tickerRes, initialBalanceTry] = await Promise.all([
       hasTr ? getSpotAccountAssets(apiKey, apiSecret) : Promise.resolve({ freeTry: 0, lockedTry: 0, realBalanceTry: 0, assets: [] }),
       getServerPositions(),
       fetch("https://api.binance.com/api/v3/ticker/price", {
         cache: "no-store",
         signal: AbortSignal.timeout(4000),
       }).catch(() => null),
+      getServerInitialBalance(),
     ])
 
     if (typeof wallet.freeTry === "number") {
@@ -1300,7 +1279,11 @@ export async function GET(_request: NextRequest) {
     let trSkipReason = isGlobalOnlyMode ? "Binance Global modu aktif: Tüm işlemler Binance Global Futures üzerinde yürütülüyor." : ""
     let trMode = isGlobalOnlyMode ? "GLOBAL_MODE" : "SCANNING"
 
-    if (isGlobalOnlyMode) {
+    if (botRisk.killSwitchActive && !isSnipeMode) {
+      canBuyTr = false
+      trMode = "KILL_SWITCH"
+      trSkipReason = `🛑 KILL SWITCH AKTİF (${botRisk.killSwitchReason || "Acil durdurma"}): Spot ve vadeli tüm YENİ alımlar kilitlendi. Açık pozisyonlar TP/SL motoruyla korunmaya devam ediyor.`
+    } else if (isGlobalOnlyMode) {
       canBuyTr = false
     } else if (!isActive) {
       canBuyTr = false
@@ -1348,10 +1331,12 @@ export async function GET(_request: NextRequest) {
             }
           } catch {}
 
-          if (todayRealizedPnl <= -15.0 && !isSnipeMode) {
+          // Günlük zarar limiti: sabit -15 TL VEYA başlangıç kasasının %maxDailyLossPct'i (hangisi daha sıkı ise)
+          const dailyLossFloorTry = Math.max(15.0, initialBalanceTry > 0 ? (initialBalanceTry * botRisk.maxDailyLossPct) / 100 : 15.0)
+          if (todayRealizedPnl <= -dailyLossFloorTry && !isSnipeMode) {
             canBuyTr = false
             trMode = "DAILY_CIRCUIT_BREAKER"
-            trSkipReason = `ğŸ›¡ï¸ GÃœNLÃœK DEVRE KESÄ°CÄ° DEVREDE: BugÃ¼n gerÃ§ekleÅŸen net zarar (${todayRealizedPnl.toFixed(2)} TL) gÃ¼nlÃ¼k gÃ¼venlik sÄ±nÄ±rÄ±nÄ± (-15 TL) aÅŸtÄ±. KasanÄ±n daha fazla erimesini Ã¶nlemek iÃ§in yeni alÄ±mlar kilitlendi. Mevcut ${positions.length} pozisyon korunuyor.`
+            trSkipReason = `ğŸ›¡ï¸ GÃœNLÃœK DEVRE KESÄ°CÄ° DEVREDE: BugÃ¼n gerÃ§ekleÅŸen net zarar (${todayRealizedPnl.toFixed(2)} TL) gÃ¼nlÃ¼k gÃ¼venlik sÄ±nÄ±rÄ±nÄ± (-${dailyLossFloorTry.toFixed(2)} TL) aÅŸtÄ±. KasanÄ±n daha fazla erimesini Ã¶nlemek iÃ§in yeni alÄ±mlar kilitlendi. Mevcut ${positions.length} pozisyon korunuyor.`
           }
         }
       }
@@ -1620,8 +1605,8 @@ export async function GET(_request: NextRequest) {
                       const ema20_5m = calcEmaLast(closes5m, 20)
                       isEma5mValid = cur5m >= ema9_5m && cur5m >= ema20_5m
 
-                      const last5m = klines5m[klines5m.length - 1]
-                      const prev5m = klines5m[klines5m.length - 2]
+                      const last5m = klines5m[klines5m.length - 2] // 🛑 REPAINT ENGELİ: kapanmış 5m mum
+                      const prev5m = klines5m[klines5m.length - 3]
                       const open5m = parseFloat(last5m[1]) || cur5m
                       const high5m = parseFloat(last5m[2]) || cur5m
                       const low5m = parseFloat(last5m[3]) || cur5m
@@ -1667,8 +1652,8 @@ export async function GET(_request: NextRequest) {
                       const ema20_15m = calcEmaLast(closes15m, 20)
                       isEma15mValid = cur15m >= ema9_15m && cur15m >= ema20_15m
 
-                      const last15m = klines15m[klines15m.length - 1]
-                      const prev15m = klines15m[klines15m.length - 2]
+                      const last15m = klines15m[klines15m.length - 2] // 🛑 REPAINT ENGELİ: kapanmış 15m mum
+                      const prev15m = klines15m[klines15m.length - 3]
                       const open15m = parseFloat(last15m[1]) || cur15m
                       const close15m = parseFloat(last15m[4]) || cur15m
                       const openPrev15m = parseFloat(prev15m[1]) || close15m
@@ -2269,7 +2254,12 @@ export async function GET(_request: NextRequest) {
         if (futuresBalance.ok) {
           let availUsdt = futuresBalance.availableBalanceUsdt
           const todayStr = new Date().toISOString().split("T")[0]
-          await setDailyLoss(availUsdt, todayStr).catch(() => {})
+          // 📉 GÜN BAŞI BAKİYE KAYDI — SADECE GÜN DEĞİŞİNCE YAZILIR (FAIL-PROOF):
+          // Daha önce her döngüde setDailyLoss(availUsdt) üzerine yazıyordu; zarar ettikçe
+          // "gün başı bakiyesi" de düşüyordu ve günlük zarar debriyajı ASLA devreye giremiyordu.
+          // getDailyLoss(currentBalance): gün aynıysa ilk kaydedilen bakiyeyi geri döner.
+          const dailyLossInfo = await getDailyLoss(availUsdt).catch(() => ({ startBalance: 0, date: todayStr }))
+          const futuresDayStartUsdt = dailyLossInfo.startBalance || 0
           const allFuturesPos = await getFuturesPositions(globKey, globSecret)
           // Sadece açık Long pozisyonlar
           let openFuturesPos = allFuturesPos.filter((p) => p.positionAmt > 0)
@@ -3495,8 +3485,26 @@ export async function GET(_request: NextRequest) {
           const configuredFuturesSlots = Math.max(1, slotConfig?.targetSlots ?? exchangeSettings?.maxSlots ?? 2)
           const wantedFuturesSlots = Math.max(1, Math.min(globalConcurrentCap, configuredFuturesSlots))
           const maxFuturesSlots = wantedFuturesSlots
+
+          // 🛡️ GÜNLÜK ZARAR DEVRE KESİCİ (FUTURES):
+          // Gün başı bakiyesi (futuresDayStartUsdt) ile güncel serbest teminat karşılaştırılır;
+          // maxDailyLossPct (>=%5 varsayılan) aşılırsa yeni kaldıraçlı alımlar KİLİTLENİR.
+          let futuresDailyLossBlock = false
+          if (futuresDayStartUsdt > 0 && availUsdt < futuresDayStartUsdt) {
+            const dayLossPct = ((futuresDayStartUsdt - availUsdt) / futuresDayStartUsdt) * 100
+            if (dayLossPct >= botRisk.maxDailyLossPct && !isSnipeMode) {
+              futuresDailyLossBlock = true
+              if (futuresSummary) {
+                futuresSummary.message = `📉 GÜNLÜK ZARAR KİLİDİ: Gün başı ${futuresDayStartUsdt.toFixed(2)} USDT → şimdi ${availUsdt.toFixed(2)} USDT (-%${dayLossPct.toFixed(2)}, sınır %${botRisk.maxDailyLossPct}). Yeni alımlar durduruldu, açık pozisyonlar TP/SL ile korunuyor.`
+              }
+              console.warn(logPrefix, `📉 [FUTURES GÜNLÜK DEVRE KESİCİ] Gün başı ${futuresDayStartUsdt.toFixed(2)} → ${availUsdt.toFixed(2)} USDT (zarar %${dayLossPct.toFixed(2)} >= %${botRisk.maxDailyLossPct}). Yeni vadeli alımlar kilitlendi.`)
+            }
+          }
+
           const futuresManualPause = await isServerManualSellCooldown()
-          if (futuresManualPause.active) {
+          if (futuresDailyLossBlock) {
+            console.warn(logPrefix, `📉 Günlük zarar sınırı aşıldı → yeni vadeli alım yapılmıyor (açık pozisyonlar korunuyor).`)
+          } else if (futuresManualPause.active) {
             console.log(logPrefix, `⏸️ Kullanıcı manuel satış yaptı. 30 dakikalık (2 mum) soğuma kuralı devrede (${futuresManualPause.remainingSec}s kaldı). Yeni alım yapılmıyor.`)
           } else if (isActive && openFuturesPos.length < maxFuturesSlots && availUsdt >= 0.35) {
             // 🛡️ BİNANCE GLOBAL KALKAN KURALI: BTC ÇÖKÜŞTEYKEN ASLA KALDIRAÇLI LONG AÇMA!
@@ -3821,14 +3829,14 @@ export async function GET(_request: NextRequest) {
 
                   // 4) Mum Değişkenleri ve Ortalama Hesapları
                   const sma20_15m = closes15m.slice(-20).reduce((a: number, b: number) => a + b, 0) / 20
-                  const m0_15 = klines15m[klines15m.length - 1]
-                  const m1_15 = klines15m[klines15m.length - 2]
+                  const m0_15 = klines15m[klines15m.length - 2] // 🛑 REPAINT ENGELİ: SADECE KAPANMIŞ 15m mumu (canlı [-1] mum kapanınca değişir!)
+                  const m1_15 = klines15m[klines15m.length - 3]
                   const isGreen15m = parseFloat(m0_15[4]) >= parseFloat(m0_15[1])
                   const isPrevGreen15m = parseFloat(m1_15[4]) >= parseFloat(m1_15[1])
                   const isDoubleGreen15m = isGreen15m && isPrevGreen15m
 
-                  const m0_5 = klines5m[klines5m.length - 1]
-                  const m1_5 = klines5m[klines5m.length - 2]
+                  const m0_5 = klines5m[klines5m.length - 2] // 🛑 REPAINT ENGELİ: SADECE KAPANMIŞ 5m mumu
+                  const m1_5 = klines5m[klines5m.length - 3]
                   const isGreen5m = parseFloat(m0_5[4]) >= parseFloat(m0_5[1])
                   const isPrevGreen5m = parseFloat(m1_5[4]) >= parseFloat(m1_5[1])
                   const isDoubleGreen5m = isGreen5m && isPrevGreen5m
@@ -4288,9 +4296,12 @@ export async function GET(_request: NextRequest) {
                       break
                     }
 
-                    // Günlük başlangıç bakiyesini güncel serbest teminata senkronize et (Kullanıcı talebiyle %5 engel kaldırıldı)
-                    const todayStr = new Date().toISOString().split("T")[0]
-                    await setDailyLoss(availUsdt, todayStr).catch(() => {})
+                    // 📉 GÜNLÜK ZARAR TEKRAR KONTROLÜ (alım döngüsü içi son savunma):
+                    // NOT: Gün başı bakiyesi artık HER DÖNGÜDE üzerine YAZILMAZ (günlük zarar debriyajı çalışır).
+                    if (futuresDailyLossBlock) {
+                      console.warn(logPrefix, `📉 [GÜNLÜK ZARAR KİLİDİ] Yeni alım iptal edildi: ${candSym}`)
+                      break
+                    }
 
                     // Olası eski açık kalan emirleri temizle
                     await cancelFuturesAllOpenOrders(globKey, globSecret, candSym).catch(() => {})
@@ -4344,9 +4355,11 @@ export async function GET(_request: NextRequest) {
                         continue
                       }
 
-                      // 🧪 DRY_RUN KONTROLÜ:
-                      // Sadece DRY_RUN açıkça 'true'/'1' olarak ayarlanmışsa simülasyon olarak çalışır; aksi halde canlı API anahtarlarıyla gerçek emir gönderir.
-                      const isExplicitDryRun = ["true", "1"].includes((process.env.DRY_RUN || "").trim().replace(/^["']|["']$/g, "").toLowerCase())
+                      // 🧪 DRY_RUN KONTROLÜ (FAIL-CLOSED, getBotRiskConfig() ile birebir tutarlı):
+                      // - DRY_RUN "false" DIŞINDAKİ her değer (tanımsız dahil) → SİMÜLASYON
+                      // - BINANCE_ENV "live"/"production" değilse → SİMÜLASYON
+                      // Aksi halde canlı API anahtarlarıyla gerçek emir gönderilir!
+                      const isExplicitDryRun = botRisk.dryRun || botRisk.binanceEnv !== "live"
                       if (isExplicitDryRun) {
                         const dryTrade = {
                           symbol: candSym,
