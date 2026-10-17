@@ -698,17 +698,12 @@ export async function GET(_request: NextRequest) {
       }
 
       // Cüzdanda bulunan ancak pozisyonlarda eksik olan coinleri dahil et
-      const KNOWN_ENTRIES: Record<string, number> = {
-        APT: 39.93,
-        PEPE: 0.00021022,
-        RAY: 93.35,
-        BONK: 0.0001823,
-        COW: 7.78,
-        MUBARAK: 2.987,
-        DOT: 61.50,
-        UNI: 458.70,
-        DOGE: 4.60,
-      }
+      // 🔧 KNOWN_ENTRIES hack'i KALDIRILDI (2026-10): Eskiden APT/PEPE/RAY gibi
+      // coinler için hardcoded "bilinen giriş fiyatı" kullanılıyordu (APT: 39.93 vb.).
+      // Bu, PnL'i sahteleştirip TP/SL'i yanlış seviyelere kuruyordu (analytics'te
+      // -86 TL gibi şişmiş tekli zararlar bu yüzden görüldü).
+      // Artık maliyeti bilinmeyen cüzdan-koinesi ŞU ANDAKİ gerçek piyasa
+      // fiyatına re-baseline edilir; TP/SL ve PnL gerçek fiyattan hesaplanır.
 
       for (const a of wallet.assets) {
         const sym = a.asset.toUpperCase()
@@ -721,14 +716,11 @@ export async function GET(_request: NextRequest) {
 
         // Bekleyen limit emri henüz borsada sonuçlanmamışsa cüzdan sync ile mükerrer pozisyon açma!
         if (!alreadyIn && !isPendingOrder && totalVal >= 40) {
-          // 🛡️ Sabit kayıtlı giriş fiyatı canlı fiyattan %15'ten fazla saparsa GÜVENME (eski kayıt → sahte TP/SL satışı riski)
-          const knownEntry = KNOWN_ENTRIES[sym]
-          const knownIsSane = knownEntry && curP > 0 && Math.abs(knownEntry - curP) / curP <= 0.15
-          const entryP = knownIsSane ? knownEntry : (curP > 0 ? curP : 1)
+          const entryP = curP > 0 ? curP : 1
           const invested = totalCoins * entryP
           const isMemeToken = MEME_TOKENS.has(sym)
           const isDefiToken = DEFI_TOKENS.has(sym)
-          const tpRatio = sym === "APT" ? 0.0390 : isMemeToken ? 0.0650 : isDefiToken ? 0.0600 : 0.0450
+          const tpRatio = isMemeToken ? 0.0650 : isDefiToken ? 0.0600 : 0.0450
           const slRatio = 0.0350
           reconciledPositions.push({
             id: `pos-${sym.toLowerCase()}-cuzdan-sync`,
@@ -741,7 +733,7 @@ export async function GET(_request: NextRequest) {
             amount: totalCoins,
             totalTry: invested,
             initialTotalTry: invested,
-            takeProfitPrice: sym === "APT" ? 41.49 : formatSmartPrice(entryP * (1 + tpRatio)),
+            takeProfitPrice: formatSmartPrice(entryP * (1 + tpRatio)),
             stopLossPrice: formatSmartPrice(entryP * (1 - slRatio)),
             pnl: curP > 0 ? (curP - entryP) * totalCoins : 0,
             pnlPercent: curP > 0 && entryP > 0 ? ((curP - entryP) / entryP) * 100 : 0,
@@ -847,12 +839,10 @@ export async function GET(_request: NextRequest) {
       const idealSl = formatSmartPrice(pos.entryPrice * (1 - fullSlRatio))
 
       // Pozisyonun hedefi sabit tutulur (yukarı esnetilmez; daha önce dinamik sistemce şişirilmişse orijinal hedefe geri çekilir):
+      // 🔧 APT 39.93/41.49 özel durumu KALDIRILDI — KNOWN_ENTRIES hack'inin devamıydı;
+      // gerçek giriş fiyatıyla hesaplanan hedef (idealTp) artık her coin için geçerli.
       let targetTpPrice = pos.takeProfitPrice
-      if (pos.symbol.includes("APT") && Math.abs(pos.entryPrice - 39.93) < 0.1) {
-        // APT'nin dinamik şişirilen hedefini ilk orijinal seviyesine (41.49 ₺ / +%3.9) sabitle
-        targetTpPrice = 41.49
-        pos.takeProfitPrice = 41.49
-      } else if (!targetTpPrice || userCustomTpPct) {
+      if (!targetTpPrice || userCustomTpPct) {
         targetTpPrice = idealTp
         pos.takeProfitPrice = targetTpPrice
       }
@@ -4205,10 +4195,63 @@ export async function GET(_request: NextRequest) {
                 )
               }
 
+              // 📈 BTC TREND REJİM FİLTRESİ (YÜKSEK TF) — 2026-10 analytics tepkisi:
+              // byHour verisi UTC 9,10,12,15,17 saatlerinde %0 isabet; byDay 36 işlemde
+              // 26 zarar. Sebep: düşüş/karışma rejiminde alt-long açıp %73 oranla stop.
+              // BTC 1h kapanışı EMA20'nin altındaysa VE 24h değişimi negatifse
+              // bu turda YENİ vadeli long açılmaz (açık pozisyonlar kendi kurallarıyla yönetilir).
+              let btcRegimeOk = true
+              try {
+                const btcKRegimeRes = await publicFetch(`${BINANCE_FUTURES_BASE}/fapi/v1/klines?symbol=BTCUSDT&interval=1h&limit=50`, { cache: "no-store" })
+                if (btcKRegimeRes.ok) {
+                  const btcRegimeKlines: any[] = await btcKRegimeRes.json()
+                  if (Array.isArray(btcRegimeKlines) && btcRegimeKlines.length >= 45) {
+                    const btcCloses = btcRegimeKlines.map((k: any) => parseFloat(k[4]))
+                    let btcEma20 = btcCloses[0]
+                    const btcEmaK = 2 / (20 + 1)
+                    for (let i = 1; i < btcCloses.length; i++) {
+                      btcEma20 = btcCloses[i] * btcEmaK + btcEma20 * (1 - btcEmaK)
+                    }
+                    const btcLastClose = btcCloses[btcCloses.length - 1]
+                    const btcRefClose = btcCloses[btcCloses.length - 25]
+                    const btc24hChg = btcRefClose > 0 ? ((btcLastClose - btcRefClose) / btcRefClose) * 100 : 0
+                    if (btcLastClose < btcEma20 * 0.999 && btc24hChg < 0) {
+                      btcRegimeOk = false
+                      console.log(
+                        logPrefix,
+                        `📉 [BTC TREND REJİMİ KAPALI] BTC 1h kapanışı EMA20'nin %${(((btcLastClose - btcEma20) / btcEma20) * 100).toFixed(2)} altında ve 24h değişim %${btc24hChg.toFixed(2)}. Bu turda YENİ vadeli long açılmayacak (mevcut pozisyonlar kendi kurallarıyla yönetilmeye devam eder).`
+                      )
+                    }
+                  }
+                }
+              } catch {}
+
               for (const sel of grokConfluenceCandidates) {
                 const candSym = sel.candSym
                 const curPrice = sel.curPrice
                 try {
+                  // 📉 BTC REJİM KAPISI — rejim kapalıysa tüm adayları atla:
+                  if (!btcRegimeOk) {
+                    console.log(logPrefix, `📉 [BTC REJİMİ] ${candSym} atlandı: BTC trend rejimi kapalı, yeni long yasak.`)
+                    continue
+                  }
+
+                  // 🚫 FOMO-KOŞU GİRİŞ ENGELİ (analytics: 27.8% isabet, SL +24s):
+                  // 24h pompasını çoktan yapmış coine (>= %+8) girmek tepe satıcılarına
+                  // para bağışlamaktır — giriş fiyatı mum tepesine oturur, ilk red candle
+                  // stop'u doldurur. Bu durumda aday ele.
+                  try {
+                    const c24hqRes = await publicFetch(`${BINANCE_FUTURES_BASE}/fapi/v1/ticker/24hr?symbol=${candSym}`, { cache: "no-store" })
+                    if (c24hqRes.ok) {
+                      const c24hq: any = await c24hqRes.json()
+                      const candChange24h = parseFloat(c24hq.priceChangePercent) || 0
+                      if (candChange24h >= 8.0) {
+                        console.log(logPrefix, `🚫 [FOMO KOŞUSU ENGELLENDİ] ${candSym} atlandı: 24h değişim %+${candChange24h.toFixed(1)} — tepe avcılığı riski.`)
+                        continue
+                      }
+                    }
+                  } catch {}
+
                   if (openFuturesPos.some((p) => p.symbol === candSym)) continue
                   if (remainingPendingOrders.some((po) => po.pair === candSym)) continue
 
@@ -4233,10 +4276,14 @@ export async function GET(_request: NextRequest) {
                     const isCandMeme = MEME_TOKENS.has(cleanCand) || ["DOGE", "PEPE", "SHIB", "BONK", "FLOKI", "WIF", "NEIRO", "TURBO", "PENGU", "1000PEPE", "1000SHIB", "1000BONK", "1000FLOKI"].includes(cleanCand)
 
                     // 🛡️ GÜVENLİK VE RİSK TAVANLARI:
-                    // Kaldıraç maks 10x, pozisyon maks 20 USDT, açık pozisyon maks 3
+                    // 📉 KALDIRAÇ TAVANI 10x → 3x düşürüldü (2026-10, analytics verisi):
+                    // 25/36 işlem stop'a gitmişti; 10x'te ±%3.5 fiyat bandı ±%35 ROI
+                    // salınımı demek ve likidasyon tamponu tek mum fitilini bile kaldıramıyor.
+                    // 3x = aynı parasal riskle 3x daha kalın tasfiye tamponu.
+                    // (Kaldıraç maks 3x, pozisyon maks 20 USDT, açık pozisyon maks 3)
                     const maxAllowedLeverage = Math.min(exchangeSettings?.maxLeverageCap || 10, botRisk.maxLeverageCap || 10)
                     const maxAllowedNotional = Math.min(exchangeSettings?.maxPositionSizeUsdt || 20, botRisk.maxPositionSizeUsdt || 20)
-                    let targetLeverage = Math.min(10, maxAllowedLeverage)
+                    let targetLeverage = Math.min(3, maxAllowedLeverage)
 
                     const remainingSlots = Math.max(1, maxFuturesSlots - openFuturesPos.length - pendingFuturesCount)
                     const slotMarginUsdt = availUsdt < 25 ? (availUsdt * 0.95) : Math.max(5, (availUsdt / remainingSlots) * 0.95)
@@ -4281,14 +4328,11 @@ export async function GET(_request: NextRequest) {
 
                     // 🛡️ DİNAMİK KALDIRAÇ TAMPONU (İzole Likidasyon Koruması):
                     // İzole likidasyon seviyesinin stop seviyesinden önce tetiklenmemesi için:
-                    // leverage = min(10, floor(100 / (stopMesafesiYuzde + 2.5)))
-                    const leverageCapWithBuffer = Math.min(10, Math.floor(100 / (dynamicSlPct + 2.5)))
+                    // leverage = min(3, floor(100 / (stopMesafesiYuzde + 2.5)))
+                    const leverageCapWithBuffer = Math.min(3, Math.floor(100 / (dynamicSlPct + 2.5)))
                     targetLeverage = Math.min(targetLeverage, Math.max(1, leverageCapWithBuffer))
-                    if (availUsdt < 15) {
-                      const minLevForNotional = Math.min(maxAllowedLeverage, Math.max(5, Math.ceil(5.8 / Math.max(0.35, slotMarginUsdt))))
-                      targetLeverage = Math.max(targetLeverage, minLevForNotional)
-                      notionalUsdt = Math.min(maxAllowedNotional, Math.max(5.2, slotMarginUsdt * targetLeverage))
-                    }
+                    // 🔧 Eski "küçük bakiyede kaldıracı 5-10x'e zorla şişir" bloğu kaldırıldı:
+                    // bakiye küçükse notional kendi küçülür; risk büyütmek yerine pozisyon atlanır.
 
                     // 🛑 KILL_SWITCH VE GÜNLÜK ZARAR KORUMASI:
                     if (botRisk.killSwitchActive) {
