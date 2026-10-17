@@ -4413,6 +4413,15 @@ export async function GET(_request: NextRequest) {
                     // 🔧 Eski "küçük bakiyede kaldıracı 5-10x'e zorla şişir" bloğu kaldırıldı:
                     // bakiye küçükse notional kendi küçülür; risk büyütmek yerine pozisyon atlanır.
 
+                    // 🧪 DRY-RUN SİMÜLASYON BOYUTU: simülasyon GERÇEK BAKİYE ile sınırlı OLMAMALI.
+                    // Aksi halde (ör. 1.29 USDT × 3x = 3.9 USDT < 5 USDT borsa minimumu) hiç
+                    // simüle işlem açılmıyor ve ölçüm imkânsız hale geliyordu.
+                    // Simülasyonda konfigüre edilmiş üst limit (varsayılan 20 USDT) kullanılır;
+                    // pozisyon boyutu isabet oranını değiştirmez, sadece ölçümü mümkün kılar.
+                    if (isDryRunActive) {
+                      notionalUsdt = Math.max(notionalUsdt, Math.min(maxAllowedNotional, 20))
+                    }
+
                     // 🛑 KILL_SWITCH VE GÜNLÜK ZARAR KORUMASI:
                     if (botRisk.killSwitchActive) {
                       console.warn(logPrefix, `🛑 [KILL_SWITCH] Yeni alım iptal edildi: ${candSym}`)
@@ -4508,7 +4517,9 @@ export async function GET(_request: NextRequest) {
                         // SL/TP/trailing/zaman kurallarıyla SANAL kapatılacak (analytics beslenir).
                         try {
                           const simPositions = await getDryRunPositions()
-                          if (!simPositions.some((p: any) => p.symbol === candSym)) {
+                          if (simPositions.length >= maxFuturesSlots) {
+                            console.log(logPrefix, `🧪 [DRY_RUN] Simülasyon slotu dolu (${simPositions.length}/${maxFuturesSlots}) — ${candSym} simüle edilmedi.`)
+                          } else if (!simPositions.some((p: any) => p.symbol === candSym)) {
                             simPositions.push({
                               symbol: candSym,
                               entryPrice: curPrice,
